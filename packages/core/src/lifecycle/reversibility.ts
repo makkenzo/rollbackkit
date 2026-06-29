@@ -1,4 +1,4 @@
-import type { JsonObject } from './json';
+import type { JsonObject } from '../shared/json';
 
 export type ReversibilityKind = 'full' | 'partial' | 'compensating' | 'irreversible';
 

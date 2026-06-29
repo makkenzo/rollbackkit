@@ -1,6 +1,6 @@
-import type { ActionDefinition } from './action';
-import { RollbackKitError } from './errors';
-import type { JsonObject, JsonValue } from './json';
+import { RollbackKitError } from '../errors/rollbackkit-error';
+import type { JsonObject, JsonValue } from '../shared/json';
+import type { ActionDefinition } from './definition';
 
 export type RegisteredActionDefinition = ActionDefinition<JsonValue, JsonValue, JsonValue>;
 

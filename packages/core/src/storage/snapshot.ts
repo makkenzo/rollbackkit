@@ -1,4 +1,4 @@
-import type { JsonObject, JsonValue } from './json';
+import type { JsonObject, JsonValue } from '../shared/json';
 
 export interface Snapshot<TValue extends JsonValue = JsonValue> {
     readonly id: string;

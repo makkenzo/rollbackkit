@@ -1,13 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-    ActionRegistry,
-    createActionRegistry,
-    defineAction,
-    isRollbackKitError,
-    REVERSIBILITY,
-    RollbackKitError,
-} from './index';
+import { defineAction, isRollbackKitError, REVERSIBILITY, RollbackKitError } from '../index';
+import { ActionRegistry, createActionRegistry } from './registry';
 
 function createTestAction(name: string) {
     return defineAction({

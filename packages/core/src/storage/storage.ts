@@ -1,10 +1,10 @@
-import type { ActionActor } from './actor';
-import type { SerializedRollbackKitError } from './errors';
-import type { JsonObject, JsonValue } from './json';
-import type { ActionRun, ActionRunStatus } from './lifecycle';
-import type { Reversibility } from './reversibility';
+import type { SerializedRollbackKitError } from '../errors/rollbackkit-error';
+import type { ActionActor } from '../identity/actor';
+import type { ActionTarget } from '../identity/target';
+import type { ActionRun, ActionRunStatus } from '../lifecycle/lifecycle';
+import type { Reversibility } from '../lifecycle/reversibility';
+import type { JsonObject, JsonValue } from '../shared/json';
 import type { CreateSnapshotInput, Snapshot } from './snapshot';
-import type { ActionTarget } from './target';
 
 export interface CreateActionRunInput<TInput extends JsonValue = JsonValue> {
     readonly name: string;

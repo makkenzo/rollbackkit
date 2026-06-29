@@ -1,4 +1,4 @@
-import type { JsonObject } from './json';
+import type { JsonObject } from './../shared';
 
 export type TargetType = string & {};
 

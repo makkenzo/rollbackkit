@@ -1,6 +1,6 @@
-import type { JsonObject } from './json';
+import type { JsonObject } from '../shared/json';
+import type { DurationMs } from '../shared/time';
 import type { Reversibility } from './reversibility';
-import type { DurationMs } from './time';
 
 export type PreviewSeverity = 'info' | 'warning' | 'danger';
 

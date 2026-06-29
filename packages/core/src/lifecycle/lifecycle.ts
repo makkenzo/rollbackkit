@@ -1,8 +1,8 @@
-import type { ActionActor } from './actor';
-import type { SerializedRollbackKitError } from './errors';
-import type { JsonObject, JsonValue } from './json';
+import type { SerializedRollbackKitError } from '../errors/rollbackkit-error';
+import type { ActionActor } from '../identity/actor';
+import type { ActionTarget } from '../identity/target';
+import type { JsonObject, JsonValue } from '../shared/json';
 import type { Reversibility } from './reversibility';
-import type { ActionTarget } from './target';
 
 export type ActionPhase = 'preview' | 'execute' | 'undo';
 

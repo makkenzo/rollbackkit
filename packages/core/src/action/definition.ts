@@ -1,11 +1,11 @@
-import type { ActionActor } from './actor';
-import type { JsonObject, JsonValue } from './json';
-import type { ActionPhase, ActionRun, ExecuteResult, UndoResult } from './lifecycle';
-import type { PreviewResult } from './preview';
-import type { Reversibility } from './reversibility';
-import type { SnapshotReader, SnapshotRecorder } from './snapshot';
-import type { ActionTarget } from './target';
-import type { Clock, DurationMs } from './time';
+import type { ActionActor } from '../identity/actor';
+import type { ActionTarget } from '../identity/target';
+import type { ActionPhase, ActionRun, ExecuteResult, UndoResult } from '../lifecycle/lifecycle';
+import type { PreviewResult } from '../lifecycle/preview';
+import type { Reversibility } from '../lifecycle/reversibility';
+import type { JsonObject, JsonValue } from '../shared/json';
+import type { Clock, DurationMs } from '../shared/time';
+import type { SnapshotReader, SnapshotRecorder } from '../storage/snapshot';
 
 export type MaybePromise<TValue> = TValue | Promise<TValue>;
 
