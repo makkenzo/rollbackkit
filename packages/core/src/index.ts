@@ -38,12 +38,11 @@ export type {
     PreviewSeverity,
     PreviewSideEffect,
 } from './preview';
-
+export type { RegisteredActionDefinition } from './registry';
+export { ActionRegistry, createActionRegistry } from './registry';
 export type { Reversibility, ReversibilityKind } from './reversibility';
 export { isUndoable, REVERSIBILITY } from './reversibility';
-
 export type { CreateSnapshotInput, Snapshot, SnapshotReader, SnapshotRecorder } from './snapshot';
-
 export type {
     ActionConflict,
     ActionHistoryQuery,
@@ -55,8 +54,6 @@ export type {
     StorageAdapter,
     UpdateActionRunInput,
 } from './storage';
-
 export type { ActionTarget, TargetType } from './target';
-
 export type { Clock, DurationMs } from './time';
 export { systemClock } from './time';
