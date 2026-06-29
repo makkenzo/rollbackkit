@@ -4,13 +4,15 @@
     "description": "CLI for RollbackKit migrations and diagnostics.",
     "license": "MIT",
     "type": "module",
+    "types": "./dist/index.d.mts",
+    "main": "./dist/index.mjs",
     "bin": {
-        "rollbackkit": "./dist/index.js"
+        "rollbackkit": "./dist/bin.mjs"
     },
     "exports": {
         ".": {
-            "types": "./dist/index.d.ts",
-            "import": "./dist/index.js"
+            "types": "./dist/index.d.mts",
+            "import": "./dist/index.mjs"
         }
     },
     "files": [

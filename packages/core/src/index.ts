@@ -1,1 +1,1 @@
-export const rollbackkitVersion = "0.0.0";
+export const rollbackkitVersion = '0.0.0';

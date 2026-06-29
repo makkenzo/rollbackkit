@@ -1,5 +1,1 @@
-#!/usr/bin/env node
-
-import { runCli } from "./program";
-
-runCli();
+export { rollbackkitCliVersion, runCli } from './program';
