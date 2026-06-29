@@ -1,0 +1,255 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+    type ActionActor,
+    createMemoryStorageAdapter,
+    REVERSIBILITY,
+    RollbackKitError,
+} from '../index';
+
+const actor: ActionActor = {
+    id: 'user_1',
+    type: 'user',
+    displayName: 'Test User',
+};
+
+describe('MemoryStorageAdapter', () => {
+    it('creates and reads action runs', async () => {
+        const storage = createMemoryStorageAdapter();
+
+        const run = await storage.createActionRun({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            target: {
+                id: 'project_1',
+                type: 'project',
+            },
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        expect(run.id).toBe('run_1');
+        expect(run.status).toBe('created');
+        expect(run.name).toBe('project.archive');
+
+        await expect(storage.getActionRun(run.id)).resolves.toEqual(run);
+    });
+
+    it('updates action runs', async () => {
+        const storage = createMemoryStorageAdapter();
+
+        const run = await storage.createActionRun({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const executedAt = new Date('2026-01-01T00:00:00.000Z');
+
+        const updated = await storage.updateActionRun(run.id, {
+            status: 'completed',
+            executedAt,
+            result: {
+                archived: true,
+            },
+        });
+
+        expect(updated.status).toBe('completed');
+        expect(updated.executedAt).toEqual(executedAt);
+        expect(updated.result).toEqual({
+            archived: true,
+        });
+
+        await expect(storage.getActionRun(run.id)).resolves.toEqual(updated);
+    });
+
+    it('stores snapshots', async () => {
+        const storage = createMemoryStorageAdapter();
+
+        const run = await storage.createActionRun({
+            name: 'member.change_role',
+            actor,
+            input: {
+                memberId: 'member_1',
+                role: 'admin',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const snapshot = await storage.saveSnapshot({
+            actionRunId: run.id,
+            key: 'previousRole',
+            value: {
+                role: 'viewer',
+            },
+        });
+
+        expect(snapshot.id).toBe('snapshot_2');
+        expect(snapshot.key).toBe('previousRole');
+
+        await expect(storage.getSnapshots(run.id)).resolves.toEqual([snapshot]);
+    });
+
+    it('records side effects and conflicts', async () => {
+        const storage = createMemoryStorageAdapter();
+
+        const run = await storage.createActionRun({
+            name: 'document.archive',
+            actor,
+            input: {
+                documentId: 'document_1',
+            },
+            reversibility: REVERSIBILITY.partial,
+        });
+
+        const sideEffect = await storage.recordSideEffect({
+            actionRunId: run.id,
+            type: 'email.sent',
+            status: 'completed',
+            reversibility: REVERSIBILITY.irreversible,
+            payload: {
+                template: 'document_archived',
+            },
+        });
+
+        const conflict = await storage.recordConflict({
+            actionRunId: run.id,
+            reason: 'Expected document to be archived, but it was deleted.',
+            details: {
+                documentId: 'document_1',
+            },
+        });
+
+        expect(sideEffect.id).toBe('effect_2');
+        expect(sideEffect.type).toBe('email.sent');
+        expect(conflict.id).toBe('conflict_3');
+        expect(conflict.reason).toBe('Expected document to be archived, but it was deleted.');
+    });
+
+    it('queries action history', async () => {
+        const storage = createMemoryStorageAdapter();
+
+        const first = await storage.createActionRun({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            target: {
+                id: 'project_1',
+                type: 'project',
+            },
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const second = await storage.createActionRun({
+            name: 'member.remove',
+            actor,
+            tenantId: 'tenant_1',
+            target: {
+                id: 'member_1',
+                type: 'member',
+            },
+            input: {
+                memberId: 'member_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const completedSecond = await storage.updateActionRun(second.id, {
+            status: 'completed',
+        });
+
+        await expect(
+            storage.queryActionRuns({
+                tenantId: 'tenant_1',
+                status: 'completed',
+            }),
+        ).resolves.toEqual([completedSecond]);
+
+        await expect(
+            storage.queryActionRuns({
+                tenantId: 'tenant_1',
+                limit: 1,
+            }),
+        ).resolves.toEqual([completedSecond]);
+
+        await expect(
+            storage.queryActionRuns({
+                tenantId: 'tenant_1',
+                cursor: completedSecond.id,
+            }),
+        ).resolves.toEqual([first]);
+    });
+
+    it('serializes lock handlers for the same action run', async () => {
+        const storage = createMemoryStorageAdapter();
+
+        const run = await storage.createActionRun({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const order: string[] = [];
+
+        let releaseFirst = () => {};
+        let markFirstStarted = () => {};
+
+        const firstRelease = new Promise<void>((resolve) => {
+            releaseFirst = () => resolve();
+        });
+
+        const firstStarted = new Promise<void>((resolve) => {
+            markFirstStarted = () => resolve();
+        });
+
+        const first = storage.withActionRunLock(run.id, async () => {
+            order.push('first:start');
+            markFirstStarted();
+
+            await firstRelease;
+
+            order.push('first:end');
+
+            return 'first';
+        });
+
+        const second = storage.withActionRunLock(run.id, async () => {
+            order.push('second:start');
+            order.push('second:end');
+
+            return 'second';
+        });
+
+        await firstStarted;
+
+        expect(order).toEqual(['first:start']);
+
+        releaseFirst();
+
+        await expect(Promise.all([first, second])).resolves.toEqual(['first', 'second']);
+
+        expect(order).toEqual(['first:start', 'first:end', 'second:start', 'second:end']);
+    });
+
+    it('throws when mutating a missing action run', async () => {
+        const storage = createMemoryStorageAdapter();
+
+        await expect(
+            storage.updateActionRun('missing_run', {
+                status: 'completed',
+            }),
+        ).rejects.toBeInstanceOf(RollbackKitError);
+    });
+});
