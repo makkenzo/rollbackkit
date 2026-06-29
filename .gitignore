@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Package manager
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.turbo/
+.vercel/
+.output/
+
+# VitePress / docs
+.vitepress/cache/
+.vitepress/dist/
+apps/docs/.vitepress/cache/
+apps/docs/.vitepress/dist/
+
+# Test / coverage
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# TypeScript
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.test.example
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editors / IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Temporary files
+tmp/
+temp/
+.cache/
+
+# Local database / docker volumes
+data/
+postgres-data/
+.pgdata/
+
+# npm package artifacts
+*.tgz
+
+# Misc
+*.local

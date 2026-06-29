@@ -1,0 +1,35 @@
+{
+    "name": "@rollbackkit/postgres",
+    "version": "0.0.0",
+    "description": "PostgreSQL storage adapter for RollbackKit.",
+    "license": "MIT",
+    "type": "module",
+    "sideEffects": false,
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsdown",
+        "typecheck": "tsc --noEmit",
+        "lint": "biome check .",
+        "test": "vitest run",
+        "clean": "rm -rf dist"
+    },
+    "dependencies": {
+        "@rollbackkit/core": "workspace:*",
+        "pg": "catalog:"
+    },
+    "devDependencies": {
+        "@types/node": "catalog:",
+        "@types/pg": "catalog:",
+        "tsdown": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:"
+    }
+}

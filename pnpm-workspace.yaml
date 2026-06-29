@@ -1,0 +1,19 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+allowBuilds:
+  esbuild: true
+
+catalog:
+  '@biomejs/biome': 2.5.1
+  '@changesets/cli': 2.30.0
+  '@types/node': ^26.0.1
+  '@types/pg': 8.20.0
+
+  commander: ^15.0.0
+  pg: ^8.22.0
+
+  tsdown: 0.22.3
+  turbo: 2.10.0
+  typescript: 6.0.3
+  vitest: 4.1.9
