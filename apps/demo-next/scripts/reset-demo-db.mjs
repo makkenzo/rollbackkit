@@ -1,9 +1,11 @@
 import { readDemoSql, withDemoPostgresClient } from './demo-db.mjs';
+import { migrateRollbackKitSchema } from './rollbackkit-db.mjs';
 
 await withDemoPostgresClient(async (client) => {
     const schemaSql = await readDemoSql('db/schema.sql');
     const seedSql = await readDemoSql('db/seed.sql');
 
+    await migrateRollbackKitSchema(client);
     await client.query(schemaSql);
     await deleteDemoRollbackKitHistory(client);
     await client.query(seedSql);
