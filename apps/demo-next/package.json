@@ -8,6 +8,8 @@
         "build": "next build",
         "typecheck": "tsc --noEmit",
         "lint": "biome check .",
+        "test": "vitest run",
+        "test:integration": "vitest run test/integration",
         "db:migrate": "node scripts/migrate-demo-db.mjs",
         "db:seed": "node scripts/seed-demo-db.mjs",
         "db:reset": "node scripts/reset-demo-db.mjs",
@@ -24,6 +26,7 @@
         "@types/pg": "catalog:",
         "@types/react": "catalog:",
         "@types/react-dom": "catalog:",
-        "typescript": "catalog:"
+        "typescript": "catalog:",
+        "vitest": "catalog:"
     }
 }

@@ -12,6 +12,16 @@ export function getDemoPostgresPool(): Pool {
     return demoPool;
 }
 
+export async function closeDemoPostgresPool(): Promise<void> {
+    const pool = demoPool;
+
+    demoPool = undefined;
+
+    if (pool !== undefined) {
+        await pool.end();
+    }
+}
+
 function resolveDemoDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string {
     const databaseUrl = DATABASE_URL_ENV_NAMES.map((name) => env[name]).find(
         (value): value is string => value !== undefined && value.trim() !== '',
