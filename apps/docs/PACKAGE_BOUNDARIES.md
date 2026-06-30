@@ -95,6 +95,37 @@ Future packages are intentionally not created yet:
 
 They should be added only after the core API stabilizes.
 
+## Public root exports
+
+Package root exports are intentionally narrow. If a symbol is not listed here, treat it as
+internal even when it is exported from a source module for local tests.
+
+### `@rollbackkit/core`
+
+The core root exports lifecycle contracts, action definition helpers, runtime orchestration,
+storage adapter contracts, the in-memory adapter, JSON/time primitives, identity types and
+RollbackKit errors.
+
+### `@rollbackkit/postgres`
+
+The PostgreSQL root exports:
+
+- `createPostgresStore` and `PostgresStore`;
+- `createPostgresMigrationRunner` and `PostgresMigrationRunner`;
+- migration runner result/status/options/error types;
+- `PostgresQueryExecutor`;
+- `ROLLBACKKIT_POSTGRES_MIGRATIONS`;
+- `RollbackKitPostgresMigration`;
+- `rollbackkitPostgresVersion`.
+
+PostgreSQL id generation, row mapper functions, row shapes and individual migration constants are
+internal implementation details.
+
+### `@rollbackkit/cli`
+
+The CLI package is primarily a binary package. Its root export is limited to
+`rollbackkitCliVersion`; command construction and process wiring stay internal to the package.
+
 ## Dependency direction
 
 Allowed direction:
