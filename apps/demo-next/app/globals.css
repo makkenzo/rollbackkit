@@ -490,15 +490,6 @@ td:first-child {
     color: #111111;
 }
 
-.inline-action-result {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    color: #555555;
-    font-size: 0.84rem;
-    white-space: nowrap;
-}
-
 .inline-error {
     position: absolute;
     top: calc(100% + 6px);
@@ -670,4 +661,28 @@ td:first-child {
     overflow: hidden;
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
+}
+
+.audit-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+}
+
+.audit-hint {
+    margin-top: 4px;
+    color: #777777;
+    font-size: 0.8rem;
+}
+
+.history-error {
+    margin: 0;
+    border: 1px solid #fecaca;
+    border-radius: 12px;
+    background: #fef2f2;
+    padding: 12px;
+    color: #991b1b;
+    font-size: 0.86rem;
+    line-height: 1.5;
 }

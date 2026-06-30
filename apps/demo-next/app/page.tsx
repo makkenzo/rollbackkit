@@ -1,11 +1,9 @@
 import type { ReactNode } from 'react';
 import { demoPreviewImpact } from '../lib/demo-data';
 import type { DemoPreviewImpact, DemoProject } from '../lib/demo-domain';
-import {
-    type DemoActionHistoryEntry,
-    getDemoActionHistory,
-} from '../lib/server/action-history-repository';
+import { getDemoActionHistory } from '../lib/server/action-history-repository';
 import { getDemoDashboardData } from '../lib/server/demo-repository';
+import { ActionHistoryList } from './components/action-history-list';
 import { ProjectArchiveControl } from './components/project-archive-control';
 
 export const dynamic = 'force-dynamic';
@@ -252,32 +250,6 @@ function DataTable({ columns, rows }: DataTableProps) {
                     ))}
                 </tbody>
             </table>
-        </div>
-    );
-}
-
-interface ActionHistoryListProps {
-    readonly entries: readonly DemoActionHistoryEntry[];
-}
-
-function ActionHistoryList({ entries }: ActionHistoryListProps) {
-    if (entries.length === 0) {
-        return <p className="empty-state">No actions recorded yet.</p>;
-    }
-
-    return (
-        <div className="audit-list">
-            {entries.map((entry) => (
-                <article className="audit-item" key={entry.id}>
-                    <div>
-                        <code>{entry.actionName}</code>
-                        <p>
-                            {entry.targetLabel} · {entry.actorLabel} · {entry.occurredAt}
-                        </p>
-                    </div>
-                    <span className={`status-badge ${entry.statusTone}`}>{entry.statusLabel}</span>
-                </article>
-            ))}
         </div>
     );
 }

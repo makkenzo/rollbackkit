@@ -3,11 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
-import {
-    executeProjectArchive,
-    previewProjectArchive,
-    undoDemoActionRun,
-} from '../actions/project-archive';
+import { executeProjectArchive, previewProjectArchive } from '../actions/project-archive';
 
 interface ProjectArchiveControlProps {
     readonly projectId: string;
@@ -26,11 +22,6 @@ interface PreviewState {
     readonly warnings?: readonly string[];
 }
 
-interface ActionRunState {
-    readonly id: string;
-    readonly status: string;
-}
-
 interface ActionErrorState {
     readonly code?: string;
     readonly message: string;
@@ -46,7 +37,6 @@ export function ProjectArchiveControl({
 
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [preview, setPreview] = useState<PreviewState | null>(null);
-    const [lastRun, setLastRun] = useState<ActionRunState | null>(null);
     const [error, setError] = useState<ActionErrorState | null>(null);
 
     const isArchived = status === 'Archived';
@@ -90,63 +80,22 @@ export function ProjectArchiveControl({
                 return;
             }
 
-            setLastRun({
-                id: response.data.id,
-                status: response.data.status,
-            });
-
             setIsDialogOpen(false);
             setPreview(null);
             router.refresh();
         });
     }
 
-    function undoProjectArchive() {
-        const actionRunId = lastRun?.id;
-
-        if (actionRunId === undefined) {
-            return;
-        }
-
-        setError(null);
-
-        startTransition(async () => {
-            const response = await undoDemoActionRun(actionRunId);
-
-            if (!response.ok) {
-                setError(response.error);
-                return;
-            }
-
-            setLastRun(null);
-            router.refresh();
-        });
-    }
-
     return (
         <div className="project-action-cell">
-            {lastRun === null ? (
-                <button
-                    className="button secondary"
-                    disabled={isArchived || isBusy}
-                    type="button"
-                    onClick={openPreview}
-                >
-                    {isArchived ? 'Archived' : 'Archive'}
-                </button>
-            ) : (
-                <div className="inline-action-result" role="status">
-                    <span>Project archived</span>
-                    <button
-                        className="button ghost"
-                        disabled={isBusy}
-                        type="button"
-                        onClick={undoProjectArchive}
-                    >
-                        Undo
-                    </button>
-                </div>
-            )}
+            <button
+                className="button secondary"
+                disabled={isArchived || isBusy}
+                type="button"
+                onClick={openPreview}
+            >
+                {isArchived ? 'Archived' : 'Archive'}
+            </button>
 
             {isDialogOpen ? (
                 <div className="dialog-backdrop" role="presentation">

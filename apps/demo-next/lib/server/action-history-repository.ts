@@ -24,6 +24,8 @@ export interface DemoActionHistoryEntry {
     readonly statusLabel: string;
     readonly statusTone: DemoActionHistoryTone;
     readonly occurredAt: string;
+    readonly canUndo: boolean;
+    readonly undoExpiresAt?: string;
 }
 
 interface ActionHistoryRow extends QueryResultRow {
@@ -76,6 +78,7 @@ LIMIT $2
 
 function mapActionHistoryEntry(row: ActionHistoryRow, now: Date): DemoActionHistoryEntry {
     const status = formatActionStatus(row, now);
+    const canUndo = isUndoAvailable(row, now);
 
     return {
         id: row.id,
@@ -85,6 +88,8 @@ function mapActionHistoryEntry(row: ActionHistoryRow, now: Date): DemoActionHist
         statusLabel: status.label,
         statusTone: status.tone,
         occurredAt: formatDate(row.executed_at ?? row.created_at),
+        canUndo,
+        ...(row.undo_expires_at === null ? {} : { undoExpiresAt: formatDate(row.undo_expires_at) }),
     };
 }
 
@@ -172,6 +177,10 @@ function formatActionStatus(
 }
 
 function isUndoAvailable(row: ActionHistoryRow, now: Date): boolean {
+    if (row.status !== 'completed') {
+        return false;
+    }
+
     if (!row.reversibility.undoable || row.undo_expires_at === null) {
         return false;
     }

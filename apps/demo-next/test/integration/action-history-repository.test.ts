@@ -90,7 +90,10 @@ describeIntegration('action history repository', () => {
             actorLabel: 'Ada Lovelace',
             statusLabel: 'Undo available',
             statusTone: 'warning',
+            canUndo: true,
         });
+
+        expect(history[0]?.undoExpiresAt).toBeDefined();
 
         expect(history.map((entry) => entry.targetLabel)).not.toContain(
             'Hidden Action History Target',
