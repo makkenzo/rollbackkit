@@ -205,6 +205,8 @@ The storage adapter should support:
 
 The exact TypeScript interface will be defined in `@rollbackkit/core`.
 
+For setup instructions, migration commands and local development examples, see [PostgreSQL Setup](./POSTGRESQL_SETUP.md).
+
 ## MVP scope
 
 MVP includes:
