@@ -1,34 +1,82 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-## Getting Started
+# RollbackKit Demo
 
-First, run the development server:
+A Next.js demo application for RollbackKit.
+
+RollbackKit helps TypeScript teams model dangerous SaaS actions as explicit product operations with preview, audit history and undo.
+
+This demo shows a small workspace with projects, members and documents. It is designed to demonstrate how actions such as archiving a project, changing a member role or archiving a document can be made safer through RollbackKit.
+
+## Local setup
+
+Create a local environment file:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp apps/demo-next/.env.example apps/demo-next/.env.local
+````
+
+Set the demo database URL:
+
+```bash
+ROLLBACKKIT_DEMO_DATABASE_URL="postgres://user:password@localhost:5432/rollbackkit_test"
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Prepare the demo database:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+ROLLBACKKIT_DEMO_DATABASE_URL="postgres://user:password@localhost:5432/rollbackkit_test" \
+pnpm --filter @rollbackkit/demo-next db:reset
+```
 
-## Learn More
+Start the demo app:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+ROLLBACKKIT_DEMO_DATABASE_URL="postgres://user:password@localhost:5432/rollbackkit_test" \
+pnpm --filter @rollbackkit/demo-next dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Open:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```text
+http://localhost:3000
+```
 
-## Deploy on Vercel
+## Scripts
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+pnpm --filter @rollbackkit/demo-next dev
+pnpm --filter @rollbackkit/demo-next build
+pnpm --filter @rollbackkit/demo-next typecheck
+pnpm --filter @rollbackkit/demo-next lint
+pnpm --filter @rollbackkit/demo-next db:migrate
+pnpm --filter @rollbackkit/demo-next db:seed
+pnpm --filter @rollbackkit/demo-next db:reset
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Database
+
+The demo app uses PostgreSQL for product data.
+
+Demo domain tables:
+
+```text
+demo_workspaces
+demo_members
+demo_projects
+demo_documents
+```
+
+RollbackKit lifecycle tables are managed separately by the RollbackKit PostgreSQL adapter:
+
+```text
+rollbackkit_action_runs
+rollbackkit_snapshots
+rollbackkit_side_effects
+rollbackkit_conflicts
+rollbackkit_schema_migrations
+```
+
+The demo keeps product state and RollbackKit lifecycle state separate:
+
+* product tables store workspace, members, projects and documents;
+* RollbackKit tables store action runs, snapshots, side effects, conflicts and audit history.

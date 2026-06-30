@@ -233,3 +233,5 @@ MVP does not include:
 - multi-language SDKs;
 - many database adapters;
 - AI features.
+
+For demo application setup and product direction, see [Demo App](./DEMO_APP.md).
