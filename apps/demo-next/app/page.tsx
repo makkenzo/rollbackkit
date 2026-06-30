@@ -1,94 +1,14 @@
 import type { ReactNode } from 'react';
 
-const projects = [
-    {
-        id: 'PRJ-001',
-        name: 'Billing Revamp',
-        owner: 'Ada Lovelace',
-        status: 'Active',
-        updatedAt: '4m ago',
-    },
-    {
-        id: 'PRJ-002',
-        name: 'Customer Onboarding',
-        owner: 'Grace Hopper',
-        status: 'Active',
-        updatedAt: '18m ago',
-    },
-    {
-        id: 'PRJ-003',
-        name: 'Legacy Import',
-        owner: 'Alan Turing',
-        status: 'Archived',
-        updatedAt: '1d ago',
-    },
-];
-
-const members = [
-    {
-        id: 'MBR-001',
-        name: 'Ada Lovelace',
-        email: 'ada@example.com',
-        role: 'Owner',
-    },
-    {
-        id: 'MBR-002',
-        name: 'Grace Hopper',
-        email: 'grace@example.com',
-        role: 'Admin',
-    },
-    {
-        id: 'MBR-003',
-        name: 'Alan Turing',
-        email: 'alan@example.com',
-        role: 'Viewer',
-    },
-];
-
-const documents = [
-    {
-        id: 'DOC-001',
-        title: 'Security Review Notes',
-        state: 'Published',
-        owner: 'Ada Lovelace',
-    },
-    {
-        id: 'DOC-002',
-        title: 'Bulk Import Checklist',
-        state: 'Draft',
-        owner: 'Grace Hopper',
-    },
-    {
-        id: 'DOC-003',
-        title: 'Archived Contract',
-        state: 'Archived',
-        owner: 'Alan Turing',
-    },
-];
-
-const auditTrail = [
-    {
-        id: 'RUN-1024',
-        action: 'project.archive',
-        target: 'Legacy Import',
-        actor: 'Ada Lovelace',
-        status: 'Undo available',
-    },
-    {
-        id: 'RUN-1023',
-        action: 'member.change_role',
-        target: 'Grace Hopper',
-        actor: 'Ada Lovelace',
-        status: 'Completed',
-    },
-    {
-        id: 'RUN-1022',
-        action: 'document.archive',
-        target: 'Archived Contract',
-        actor: 'Grace Hopper',
-        status: 'Partial',
-    },
-];
+import {
+    demoAuditTrail,
+    demoDocuments,
+    demoMembers,
+    demoPreviewImpact,
+    demoProjects,
+    demoWorkspace,
+} from '../lib/demo-data';
+import type { DemoPreviewImpact } from '../lib/demo-domain';
 
 export default function DemoHomePage() {
     return (
@@ -106,12 +26,9 @@ export default function DemoHomePage() {
 
             <section className="hero">
                 <div>
-                    <p className="eyebrow">Acme Cloud workspace</p>
+                    <p className="eyebrow">{demoWorkspace.label}</p>
                     <h1>Dangerous product actions, made reversible.</h1>
-                    <p className="hero-copy">
-                        Preview impact, execute safely, preserve an audit trail and undo supported
-                        actions before the rollback window expires.
-                    </p>
+                    <p className="hero-copy">{demoWorkspace.description}</p>
                 </div>
 
                 <div className="preview-card">
@@ -123,18 +40,38 @@ export default function DemoHomePage() {
                     </p>
 
                     <div className="impact-list">
-                        <ImpactItem label="Project visibility changes" tone="warning" />
-                        <ImpactItem label="3 documents remain attached" tone="neutral" />
-                        <ImpactItem label="Undo available for 30 minutes" tone="success" />
+                        {demoPreviewImpact.map((impact) => (
+                            <ImpactItem
+                                key={impact.label}
+                                label={impact.label}
+                                tone={impact.tone}
+                            />
+                        ))}
                     </div>
                 </div>
             </section>
 
             <section className="metric-grid" aria-label="Workspace summary">
-                <MetricCard label="Projects" value="3" detail="1 archived" />
-                <MetricCard label="Members" value="3" detail="2 elevated roles" />
-                <MetricCard label="Documents" value="3" detail="1 archived" />
-                <MetricCard label="Undo window" value="30m" detail="Default policy" />
+                <MetricCard
+                    label="Projects"
+                    value={String(demoProjects.length)}
+                    detail="1 archived"
+                />
+                <MetricCard
+                    label="Members"
+                    value={String(demoMembers.length)}
+                    detail="2 elevated roles"
+                />
+                <MetricCard
+                    label="Documents"
+                    value={String(demoDocuments.length)}
+                    detail="1 archived"
+                />
+                <MetricCard
+                    label="Undo window"
+                    value={demoWorkspace.undoWindowLabel}
+                    detail="Default policy"
+                />
             </section>
 
             <section className="workspace-grid">
@@ -146,7 +83,7 @@ export default function DemoHomePage() {
                     >
                         <DataTable
                             columns={['ID', 'Name', 'Owner', 'Status', 'Updated']}
-                            rows={projects.map((project) => [
+                            rows={demoProjects.map((project) => [
                                 project.id,
                                 project.name,
                                 project.owner,
@@ -163,7 +100,7 @@ export default function DemoHomePage() {
                     >
                         <DataTable
                             columns={['ID', 'Name', 'Email', 'Role']}
-                            rows={members.map((member) => [
+                            rows={demoMembers.map((member) => [
                                 member.id,
                                 member.name,
                                 member.email,
@@ -179,7 +116,7 @@ export default function DemoHomePage() {
                     >
                         <DataTable
                             columns={['ID', 'Title', 'Owner', 'State']}
-                            rows={documents.map((document) => [
+                            rows={demoDocuments.map((document) => [
                                 document.id,
                                 document.title,
                                 document.owner,
@@ -195,7 +132,7 @@ export default function DemoHomePage() {
                         description="Every completed action leaves a durable product-level record."
                     >
                         <div className="audit-list">
-                            {auditTrail.map((entry) => (
+                            {demoAuditTrail.map((entry) => (
                                 <article className="audit-item" key={entry.id}>
                                     <div>
                                         <code>{entry.action}</code>
@@ -290,10 +227,7 @@ function DataTable({ columns, rows }: DataTableProps) {
     );
 }
 
-interface ImpactItemProps {
-    readonly label: string;
-    readonly tone: 'neutral' | 'success' | 'warning';
-}
+type ImpactItemProps = DemoPreviewImpact;
 
 function ImpactItem({ label, tone }: ImpactItemProps) {
     return (
