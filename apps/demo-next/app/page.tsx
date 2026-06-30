@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 import { MemberRemoveControl } from '@/app/components/member-remove-control';
-import { demoPreviewImpact } from '../lib/demo-data';
 import type { DemoMember, DemoPreviewImpact, DemoProject } from '../lib/demo-domain';
 import { getDemoActionHistory } from '../lib/server/action-history-repository';
 import { getDemoDashboardData } from '../lib/server/demo-repository';
@@ -15,6 +14,8 @@ export default async function DemoHomePage() {
         getDemoDashboardData(),
         getDemoActionHistory(),
     ]);
+    const previewProject = dashboard.projects.find((project) => project.status === 'Active');
+    const previewProjectName = previewProject?.name ?? 'an active project';
 
     return (
         <main className="app-shell">
@@ -40,12 +41,12 @@ export default async function DemoHomePage() {
                     <div className="card-kicker">Action preview</div>
                     <h2>Archive project</h2>
                     <p>
-                        This action will archive <strong>Legacy Import</strong>, hide it from active
-                        project lists and keep snapshots available for undo.
+                        This action will archive <strong>{previewProjectName}</strong>, hide it from
+                        active project lists and keep snapshots available for undo.
                     </p>
 
                     <div className="impact-list">
-                        {demoPreviewImpact.map((impact) => (
+                        {projectArchivePreviewImpact.map((impact) => (
                             <ImpactItem
                                 key={impact.label}
                                 label={impact.label}
@@ -100,7 +101,7 @@ export default async function DemoHomePage() {
                     <DataPanel
                         id="documents"
                         title="Documents"
-                        description="Document archive actions demonstrate partial rollback messaging."
+                        description="Documents provide product context for project and ownership actions."
                     >
                         <DataTable
                             columns={['ID', 'Title', 'Owner', 'State']}
@@ -297,6 +298,21 @@ function DataTable({ columns, rows }: DataTableProps) {
 }
 
 type ImpactItemProps = DemoPreviewImpact;
+
+const projectArchivePreviewImpact: readonly DemoPreviewImpact[] = [
+    {
+        label: 'Project visibility changes',
+        tone: 'warning',
+    },
+    {
+        label: 'Attached documents remain available',
+        tone: 'neutral',
+    },
+    {
+        label: 'Undo available for 30 minutes',
+        tone: 'success',
+    },
+];
 
 function ImpactItem({ label, tone }: ImpactItemProps) {
     return (
