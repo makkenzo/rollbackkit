@@ -28,10 +28,12 @@
     "dependencies": {
         "@rollbackkit/core": "workspace:*",
         "@rollbackkit/postgres": "workspace:*",
-        "commander": "catalog:"
+        "commander": "catalog:",
+        "pg": "catalog:"
     },
     "devDependencies": {
         "@types/node": "catalog:",
+        "@types/pg": "catalog:",
         "tsdown": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:"
