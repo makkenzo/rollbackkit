@@ -3,7 +3,7 @@ import 'server-only';
 import { createRollbackKit, type RollbackKit } from '@rollbackkit/core';
 import { createPostgresStore, type PostgresQueryExecutor } from '@rollbackkit/postgres';
 import type { PoolClient } from 'pg';
-
+import { createProjectArchiveAction } from './actions/project-archive';
 import { getDemoPostgresPool } from './demo-db';
 
 export interface DemoRollbackKitRuntime {
@@ -16,7 +16,7 @@ export function createDemoRollbackKit(executor: PostgresQueryExecutor): Rollback
         storage: createPostgresStore({
             executor,
         }),
-        actions: [],
+        actions: [createProjectArchiveAction(executor)],
     });
 }
 

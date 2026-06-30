@@ -4,7 +4,11 @@ import type {
     BaseActionContext,
     PermissionDecision,
 } from '../action/definition';
-import { type ActionRegistry, createActionRegistry } from '../action/registry';
+import {
+    type ActionRegistry,
+    createActionRegistry,
+    type RegisteredActionDefinition,
+} from '../action/registry';
 import { isRollbackKitError, RollbackKitError } from '../errors/rollbackkit-error';
 import type { ActionActor } from '../identity/actor';
 import type { ActionTarget } from '../identity/target';
@@ -20,7 +24,7 @@ import type { StorageAdapter } from '../storage/storage';
 
 export interface RollbackKitOptions {
     readonly registry?: ActionRegistry;
-    readonly actions?: readonly ActionDefinition[];
+    readonly actions?: readonly RegisteredActionDefinition[];
     readonly storage?: StorageAdapter;
     readonly clock?: Clock;
 }
@@ -61,7 +65,11 @@ export class RollbackKit {
         this.storage = options.storage ?? createMemoryStorageAdapter({ clock: this.#clock });
     }
 
-    registerAction(definition: ActionDefinition): this {
+    registerAction<
+        TInput extends JsonValue = JsonObject,
+        TExecuteData extends JsonValue = JsonValue,
+        TUndoData extends JsonValue = JsonValue,
+    >(definition: ActionDefinition<TInput, TExecuteData, TUndoData>): this {
         this.registry.register(definition);
 
         return this;

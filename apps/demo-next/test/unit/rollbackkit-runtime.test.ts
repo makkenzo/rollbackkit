@@ -1,13 +1,15 @@
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
 
+import { PROJECT_ARCHIVE_ACTION_NAME } from '../../lib/server/actions/project-archive';
 import { createDemoRollbackKit } from '../../lib/server/rollbackkit';
 
 describe('demo RollbackKit runtime', () => {
-    it('creates a server-side RollbackKit runtime', () => {
+    it('registers server-side demo actions', () => {
         const rollbackkit = createDemoRollbackKit(new FakePostgresExecutor());
 
-        expect(rollbackkit.registry.size).toBe(0);
+        expect(rollbackkit.registry.size).toBe(1);
+        expect(rollbackkit.registry.has(PROJECT_ARCHIVE_ACTION_NAME)).toBe(true);
         expect(rollbackkit.storage).toBeDefined();
     });
 });

@@ -265,6 +265,70 @@ describe('RollbackKit preview lifecycle', () => {
         });
     });
 
+    it('accepts typed action definitions in constructor options', async () => {
+        interface ProjectArchiveInput extends JsonObject {
+            readonly projectId: string;
+        }
+
+        const action = defineAction<ProjectArchiveInput>({
+            name: 'project.archive.typed',
+            input: {
+                parse: (input) => {
+                    if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+                        throw new Error('Invalid project archive input.');
+                    }
+
+                    const candidate = input as {
+                        readonly projectId?: unknown;
+                    };
+
+                    if (typeof candidate.projectId !== 'string') {
+                        throw new Error('Invalid project archive input.');
+                    }
+
+                    return {
+                        projectId: candidate.projectId,
+                    };
+                },
+            },
+            reversibility: REVERSIBILITY.full,
+            resolveTarget: async (context) => ({
+                id: context.input.projectId,
+                type: 'project',
+            }),
+            preview: async (context) => ({
+                title: `Archive ${context.input.projectId}`,
+                impact: [],
+                reversibility: REVERSIBILITY.full,
+            }),
+            execute: async (context) => ({
+                data: {
+                    projectId: context.input.projectId,
+                },
+            }),
+        });
+
+        const kit = createRollbackKit({
+            actions: [action],
+        });
+
+        expect(kit.registry.has('project.archive.typed')).toBe(true);
+
+        await expect(
+            kit.preview({
+                name: 'project.archive.typed',
+                actor,
+                input: {
+                    projectId: 'project_1',
+                },
+            }),
+        ).resolves.toEqual({
+            title: 'Archive project_1',
+            impact: [],
+            reversibility: REVERSIBILITY.full,
+        });
+    });
+
     it('throws for missing actions', async () => {
         const kit = createRollbackKit();
 

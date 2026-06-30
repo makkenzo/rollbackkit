@@ -2,12 +2,13 @@ import { RollbackKitError } from '../errors/rollbackkit-error';
 import type { JsonObject, JsonValue } from '../shared/json';
 import type { ActionDefinition } from './definition';
 
-export type RegisteredActionDefinition = ActionDefinition<JsonValue, JsonValue, JsonValue>;
+// biome-ignore lint/suspicious/noExplicitAny: The registry stores heterogeneous action definitions with erased generics.
+export type RegisteredActionDefinition = ActionDefinition<any, any, any>;
 
 export class ActionRegistry {
     readonly #actions = new Map<string, RegisteredActionDefinition>();
 
-    constructor(definitions: readonly ActionDefinition[] = []) {
+    constructor(definitions: readonly RegisteredActionDefinition[] = []) {
         this.registerMany(definitions);
     }
 
@@ -31,7 +32,7 @@ export class ActionRegistry {
         return this;
     }
 
-    registerMany(definitions: readonly ActionDefinition[]): this {
+    registerMany(definitions: readonly RegisteredActionDefinition[]): this {
         for (const definition of definitions) {
             this.register(definition);
         }
@@ -73,7 +74,7 @@ export class ActionRegistry {
 }
 
 export function createActionRegistry(
-    definitions: readonly ActionDefinition[] = [],
+    definitions: readonly RegisteredActionDefinition[] = [],
 ): ActionRegistry {
     return new ActionRegistry(definitions);
 }
