@@ -1,16 +1,14 @@
 import type { ReactNode } from 'react';
 
-import {
-    demoAuditTrail,
-    demoDocuments,
-    demoMembers,
-    demoPreviewImpact,
-    demoProjects,
-    demoWorkspace,
-} from '../lib/demo-data';
+import { demoAuditTrail, demoPreviewImpact } from '../lib/demo-data';
 import type { DemoPreviewImpact } from '../lib/demo-domain';
+import { getDemoDashboardData } from '../lib/server/demo-repository';
 
-export default function DemoHomePage() {
+export const dynamic = 'force-dynamic';
+
+export default async function DemoHomePage() {
+    const dashboard = await getDemoDashboardData();
+
     return (
         <main className="app-shell">
             <header className="topbar">
@@ -26,9 +24,9 @@ export default function DemoHomePage() {
 
             <section className="hero">
                 <div>
-                    <p className="eyebrow">{demoWorkspace.label}</p>
+                    <p className="eyebrow">{dashboard.workspace.label}</p>
                     <h1>Dangerous product actions, made reversible.</h1>
-                    <p className="hero-copy">{demoWorkspace.description}</p>
+                    <p className="hero-copy">{dashboard.workspace.description}</p>
                 </div>
 
                 <div className="preview-card">
@@ -54,22 +52,22 @@ export default function DemoHomePage() {
             <section className="metric-grid" aria-label="Workspace summary">
                 <MetricCard
                     label="Projects"
-                    value={String(demoProjects.length)}
-                    detail="1 archived"
+                    value={String(dashboard.projects.length)}
+                    detail={`${countArchivedProjects(dashboard.projects)} archived`}
                 />
                 <MetricCard
                     label="Members"
-                    value={String(demoMembers.length)}
-                    detail="2 elevated roles"
+                    value={String(dashboard.members.length)}
+                    detail={`${countElevatedMembers(dashboard.members)} elevated roles`}
                 />
                 <MetricCard
                     label="Documents"
-                    value={String(demoDocuments.length)}
-                    detail="1 archived"
+                    value={String(dashboard.documents.length)}
+                    detail={`${countArchivedDocuments(dashboard.documents)} archived`}
                 />
                 <MetricCard
                     label="Undo window"
-                    value={demoWorkspace.undoWindowLabel}
+                    value={dashboard.workspace.undoWindowLabel}
                     detail="Default policy"
                 />
             </section>
@@ -83,7 +81,7 @@ export default function DemoHomePage() {
                     >
                         <DataTable
                             columns={['ID', 'Name', 'Owner', 'Status', 'Updated']}
-                            rows={demoProjects.map((project) => [
+                            rows={dashboard.projects.map((project) => [
                                 project.id,
                                 project.name,
                                 project.owner,
@@ -100,7 +98,7 @@ export default function DemoHomePage() {
                     >
                         <DataTable
                             columns={['ID', 'Name', 'Email', 'Role']}
-                            rows={demoMembers.map((member) => [
+                            rows={dashboard.members.map((member) => [
                                 member.id,
                                 member.name,
                                 member.email,
@@ -116,7 +114,7 @@ export default function DemoHomePage() {
                     >
                         <DataTable
                             columns={['ID', 'Title', 'Owner', 'State']}
-                            rows={demoDocuments.map((document) => [
+                            rows={dashboard.documents.map((document) => [
                                 document.id,
                                 document.title,
                                 document.owner,
@@ -236,4 +234,16 @@ function ImpactItem({ label, tone }: ImpactItemProps) {
             <span>{label}</span>
         </div>
     );
+}
+
+function countArchivedProjects(projects: readonly { readonly status: string }[]): number {
+    return projects.filter((project) => project.status === 'Archived').length;
+}
+
+function countElevatedMembers(members: readonly { readonly role: string }[]): number {
+    return members.filter((member) => member.role === 'Owner' || member.role === 'Admin').length;
+}
+
+function countArchivedDocuments(documents: readonly { readonly state: string }[]): number {
+    return documents.filter((document) => document.state === 'Archived').length;
 }
