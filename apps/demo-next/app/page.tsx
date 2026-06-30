@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
-
 import { demoAuditTrail, demoPreviewImpact } from '../lib/demo-data';
-import type { DemoPreviewImpact } from '../lib/demo-domain';
+import type { DemoPreviewImpact, DemoProject } from '../lib/demo-domain';
 import { getDemoDashboardData } from '../lib/server/demo-repository';
+import { ProjectArchiveControl } from './components/project-archive-control';
 
 export const dynamic = 'force-dynamic';
 
@@ -77,24 +77,15 @@ export default async function DemoHomePage() {
                     <DataPanel
                         id="projects"
                         title="Projects"
-                        description="Operations here will demonstrate previewable archive and restore flows."
+                        description="Operations here demonstrate previewable archive and restore flows."
                     >
-                        <DataTable
-                            columns={['ID', 'Name', 'Owner', 'Status', 'Updated']}
-                            rows={dashboard.projects.map((project) => [
-                                project.id,
-                                project.name,
-                                project.owner,
-                                project.status,
-                                project.updatedAt,
-                            ])}
-                        />
+                        <ProjectsTable projects={dashboard.projects} />
                     </DataPanel>
 
                     <DataPanel
                         id="members"
                         title="Members"
-                        description="Role changes and member removal will use snapshots for undo."
+                        description="Role changes and member removal use snapshots for undo."
                     >
                         <DataTable
                             columns={['ID', 'Name', 'Email', 'Role']}
@@ -110,7 +101,7 @@ export default async function DemoHomePage() {
                     <DataPanel
                         id="documents"
                         title="Documents"
-                        description="Document archive actions will demonstrate partial rollback messaging."
+                        description="Document archive actions demonstrate partial rollback messaging."
                     >
                         <DataTable
                             columns={['ID', 'Title', 'Owner', 'State']}
@@ -192,6 +183,49 @@ function DataPanel({ id, title, description, children }: DataPanelProps) {
             </div>
             {children}
         </section>
+    );
+}
+
+interface ProjectsTableProps {
+    readonly projects: readonly DemoProject[];
+}
+
+function ProjectsTable({ projects }: ProjectsTableProps) {
+    return (
+        <div className="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Owner</th>
+                        <th>Status</th>
+                        <th>Updated</th>
+                        <th>
+                            <span className="sr-only">Actions</span>
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {projects.map((project) => (
+                        <tr key={project.id}>
+                            <td>{project.id}</td>
+                            <td>{project.name}</td>
+                            <td>{project.owner}</td>
+                            <td>{project.status}</td>
+                            <td>{project.updatedAt}</td>
+                            <td className="actions-column">
+                                <ProjectArchiveControl
+                                    projectId={project.id}
+                                    projectName={project.name}
+                                    status={project.status}
+                                />
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
     );
 }
 

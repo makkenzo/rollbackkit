@@ -40,6 +40,16 @@ describeIntegration('project.archive action', () => {
         }
 
         await client
+            .query(
+                `
+DELETE FROM rollbackkit_action_runs
+WHERE tenant_id = $1
+`,
+                ['workspace_action_test'],
+            )
+            .catch(() => undefined);
+
+        await client
             .query('DELETE FROM demo_workspaces WHERE id = $1', ['workspace_action_test'])
             .catch(() => undefined);
 

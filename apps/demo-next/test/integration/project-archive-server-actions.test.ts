@@ -43,9 +43,10 @@ describeIntegration('project.archive server actions', () => {
             .query(
                 `
 DELETE FROM rollbackkit_action_runs
-WHERE target_id = $1
+WHERE tenant_id = $1
+  AND target_id = $2
 `,
-                ['project_server_action_archive_target'],
+                ['workspace_acme', 'project_server_action_archive_target'],
             )
             .catch(() => undefined);
 
