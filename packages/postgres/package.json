@@ -22,7 +22,7 @@
         "lint": "biome check .",
         "test": "vitest run",
         "test:unit": "vitest run test/unit",
-        "test:integration": "node --env-file=.env.test ./node_modules/vitest/vitest.mjs run test/integration",
+        "test:integration": "node scripts/run-integration-tests.mjs",
         "clean": "rm -rf dist"
     },
     "dependencies": {
