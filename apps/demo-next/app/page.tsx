@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
 import { demoPreviewImpact } from '../lib/demo-data';
-import type { DemoPreviewImpact, DemoProject } from '../lib/demo-domain';
+import type { DemoMember, DemoPreviewImpact, DemoProject } from '../lib/demo-domain';
 import { getDemoActionHistory } from '../lib/server/action-history-repository';
 import { getDemoDashboardData } from '../lib/server/demo-repository';
 import { ActionHistoryList } from './components/action-history-list';
+import { MemberRoleChangeControl } from './components/member-role-change-control';
 import { ProjectArchiveControl } from './components/project-archive-control';
 
 export const dynamic = 'force-dynamic';
@@ -92,15 +93,7 @@ export default async function DemoHomePage() {
                         title="Members"
                         description="Role changes and member removal use snapshots for undo."
                     >
-                        <DataTable
-                            columns={['ID', 'Name', 'Email', 'Role']}
-                            rows={dashboard.members.map((member) => [
-                                member.id,
-                                member.name,
-                                member.email,
-                                member.role,
-                            ])}
-                        />
+                        <MembersTable members={dashboard.members} />
                     </DataPanel>
 
                     <DataPanel
@@ -214,6 +207,47 @@ function ProjectsTable({ projects }: ProjectsTableProps) {
                                     projectId={project.id}
                                     projectName={project.name}
                                     status={project.status}
+                                />
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+interface MembersTableProps {
+    readonly members: readonly DemoMember[];
+}
+
+function MembersTable({ members }: MembersTableProps) {
+    return (
+        <div className="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th>
+                            <span className="sr-only">Actions</span>
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {members.map((member) => (
+                        <tr key={member.id}>
+                            <td>{member.id}</td>
+                            <td>{member.name}</td>
+                            <td>{member.email}</td>
+                            <td>{member.role}</td>
+                            <td className="actions-column">
+                                <MemberRoleChangeControl
+                                    memberId={member.id}
+                                    memberName={member.name}
+                                    role={member.role}
                                 />
                             </td>
                         </tr>

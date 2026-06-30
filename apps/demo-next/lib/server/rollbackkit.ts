@@ -3,6 +3,7 @@ import 'server-only';
 import { createRollbackKit, type RollbackKit } from '@rollbackkit/core';
 import { createPostgresStore, type PostgresQueryExecutor } from '@rollbackkit/postgres';
 import type { PoolClient } from 'pg';
+import { createMemberChangeRoleAction } from './actions/member-change-role';
 import { createProjectArchiveAction } from './actions/project-archive';
 import { getDemoPostgresPool } from './demo-db';
 
@@ -16,7 +17,7 @@ export function createDemoRollbackKit(executor: PostgresQueryExecutor): Rollback
         storage: createPostgresStore({
             executor,
         }),
-        actions: [createProjectArchiveAction(executor)],
+        actions: [createProjectArchiveAction(executor), createMemberChangeRoleAction(executor)],
     });
 }
 
