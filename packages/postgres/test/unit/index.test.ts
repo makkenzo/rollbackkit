@@ -1,6 +1,6 @@
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
-
+import * as publicApi from '../../src/index';
 import {
     createPostgresMigrationRunner,
     ROLLBACKKIT_POSTGRES_MIGRATIONS,
@@ -12,6 +12,13 @@ import { FakePostgresExecutor } from '../helpers/fake-postgres-executor';
 describe('@rollbackkit/postgres', () => {
     it('exports package version placeholder', () => {
         expect(rollbackkitPostgresVersion).toBe('0.0.0');
+    });
+
+    it('does not expose storage internals from the package root', () => {
+        expect(publicApi).not.toHaveProperty('createRollbackKitPostgresId');
+        expect(publicApi).not.toHaveProperty('mapActionRunRow');
+        expect(publicApi).not.toHaveProperty('initialSchemaMigration');
+        expect(publicApi).not.toHaveProperty('actionRunIdempotencyMigration');
     });
 
     it('exports initial migrations', () => {
