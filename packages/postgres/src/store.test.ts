@@ -8,10 +8,11 @@ import {
     type Reversibility,
     RollbackKitError,
     type SerializedRollbackKitError,
+    type SideEffectStatus,
 } from '@rollbackkit/core';
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
-import type { ActionRunRow, SnapshotRow } from './mappers';
+import type { ActionConflictRow, ActionRunRow, ActionSideEffectRow, SnapshotRow } from './mappers';
 import type { PostgresQueryExecutor } from './migration-runner';
 import { createPostgresStore } from './store';
 
@@ -24,6 +25,8 @@ class FakePostgresExecutor implements PostgresQueryExecutor {
     readonly queries: RecordedQuery[] = [];
     readonly actionRunRows = new Map<string, ActionRunRow>();
     readonly snapshotRows = new Map<string, SnapshotRow[]>();
+    readonly sideEffectRows = new Map<string, ActionSideEffectRow[]>();
+    readonly conflictRows = new Map<string, ActionConflictRow[]>();
 
     async query<TResult extends QueryResultRow = QueryResultRow>(
         text: string,
@@ -82,6 +85,34 @@ class FakePostgresExecutor implements PostgresQueryExecutor {
             const rows = this.snapshotRows.get(actionRunId) ?? [];
 
             return createQueryResult([...rows] as unknown as TResult[]);
+        }
+
+        if (text.includes('INSERT INTO rollbackkit_side_effects')) {
+            if (values === undefined) {
+                throw new Error('Expected side effect insert query values.');
+            }
+
+            const row = createActionSideEffectRowFromInsertValues(values);
+            const sideEffects = this.sideEffectRows.get(row.action_run_id) ?? [];
+
+            sideEffects.push(row);
+            this.sideEffectRows.set(row.action_run_id, sideEffects);
+
+            return createQueryResult([row] as unknown as TResult[]);
+        }
+
+        if (text.includes('INSERT INTO rollbackkit_conflicts')) {
+            if (values === undefined) {
+                throw new Error('Expected conflict insert query values.');
+            }
+
+            const row = createActionConflictRowFromInsertValues(values);
+            const conflicts = this.conflictRows.get(row.action_run_id) ?? [];
+
+            conflicts.push(row);
+            this.conflictRows.set(row.action_run_id, conflicts);
+
+            return createQueryResult([row] as unknown as TResult[]);
         }
 
         if (text.includes('FROM rollbackkit_action_runs') && text.includes('WHERE id = $1')) {
@@ -450,6 +481,197 @@ describe('PostgresStore action runs', () => {
         await expect(store.getSnapshots('run_without_snapshots')).resolves.toEqual([]);
     });
 
+    it('records side effects', async () => {
+        const now = new Date('2026-01-01T00:00:00.000Z');
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+            clock: {
+                now: () => now,
+            },
+        });
+
+        const run = await store.createActionRun({
+            name: 'document.archive',
+            actor,
+            input: {
+                documentId: 'document_1',
+            },
+            reversibility: REVERSIBILITY.partial,
+        });
+
+        const sideEffect = await store.recordSideEffect({
+            actionRunId: run.id,
+            type: 'email.sent',
+            status: 'completed',
+            reversibility: REVERSIBILITY.irreversible,
+            payload: {
+                template: 'document_archived',
+            },
+            metadata: {
+                provider: 'test',
+            },
+        });
+
+        expect(sideEffect).toEqual({
+            id: expect.stringMatching(
+                /^effect_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+            ),
+            actionRunId: run.id,
+            type: 'email.sent',
+            status: 'completed',
+            reversibility: REVERSIBILITY.irreversible,
+            payload: {
+                template: 'document_archived',
+            },
+            createdAt: now,
+            metadata: {
+                provider: 'test',
+            },
+        });
+
+        const insertQuery = executor.queries.find((query) =>
+            query.text.includes('INSERT INTO rollbackkit_side_effects'),
+        );
+
+        expect(insertQuery?.values).toEqual([
+            expect.stringMatching(/^effect_/),
+            run.id,
+            'email.sent',
+            'completed',
+            REVERSIBILITY.irreversible,
+            {
+                template: 'document_archived',
+            },
+            now,
+            {
+                provider: 'test',
+            },
+        ]);
+    });
+
+    it('records side effects without optional payload and metadata', async () => {
+        const now = new Date('2026-01-01T00:00:00.000Z');
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+            clock: {
+                now: () => now,
+            },
+        });
+
+        const run = await store.createActionRun({
+            name: 'document.archive',
+            actor,
+            input: {},
+            reversibility: REVERSIBILITY.partial,
+        });
+
+        const sideEffect = await store.recordSideEffect({
+            actionRunId: run.id,
+            type: 'notification.created',
+            status: 'planned',
+            reversibility: REVERSIBILITY.full,
+        });
+
+        expect(sideEffect).toEqual({
+            id: expect.stringMatching(/^effect_/),
+            actionRunId: run.id,
+            type: 'notification.created',
+            status: 'planned',
+            reversibility: REVERSIBILITY.full,
+            createdAt: now,
+        });
+    });
+
+    it('records conflicts', async () => {
+        const now = new Date('2026-01-01T00:00:00.000Z');
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+            clock: {
+                now: () => now,
+            },
+        });
+
+        const run = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const conflict = await store.recordConflict({
+            actionRunId: run.id,
+            reason: 'Expected project to be archived, but it was deleted.',
+            details: {
+                projectId: 'project_1',
+            },
+        });
+
+        expect(conflict).toEqual({
+            id: expect.stringMatching(
+                /^conflict_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+            ),
+            actionRunId: run.id,
+            reason: 'Expected project to be archived, but it was deleted.',
+            details: {
+                projectId: 'project_1',
+            },
+            createdAt: now,
+        });
+
+        const insertQuery = executor.queries.find((query) =>
+            query.text.includes('INSERT INTO rollbackkit_conflicts'),
+        );
+
+        expect(insertQuery?.values).toEqual([
+            expect.stringMatching(/^conflict_/),
+            run.id,
+            'Expected project to be archived, but it was deleted.',
+            {
+                projectId: 'project_1',
+            },
+            now,
+        ]);
+    });
+
+    it('records conflicts without optional details', async () => {
+        const now = new Date('2026-01-01T00:00:00.000Z');
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+            clock: {
+                now: () => now,
+            },
+        });
+
+        const run = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            input: {},
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const conflict = await store.recordConflict({
+            actionRunId: run.id,
+            reason: 'Target was changed after the original action.',
+        });
+
+        expect(conflict).toEqual({
+            id: expect.stringMatching(/^conflict_/),
+            actionRunId: run.id,
+            reason: 'Target was changed after the original action.',
+            createdAt: now,
+        });
+    });
+
     it('returns null when action run does not exist', async () => {
         const executor = new FakePostgresExecutor();
         const store = createPostgresStore({ executor });
@@ -500,6 +722,31 @@ function createSnapshotRowFromInsertValues(values: readonly unknown[]): Snapshot
         value: values[3] as JsonValue,
         created_at: values[4] as Date,
         metadata: values[5] as JsonObject | null,
+    };
+}
+
+function createActionSideEffectRowFromInsertValues(
+    values: readonly unknown[],
+): ActionSideEffectRow {
+    return {
+        id: String(values[0]),
+        action_run_id: String(values[1]),
+        type: String(values[2]),
+        status: values[3] as SideEffectStatus,
+        reversibility: values[4] as Reversibility,
+        payload: values[5] as JsonValue | null,
+        created_at: values[6] as Date,
+        metadata: values[7] as JsonObject | null,
+    };
+}
+
+function createActionConflictRowFromInsertValues(values: readonly unknown[]): ActionConflictRow {
+    return {
+        id: String(values[0]),
+        action_run_id: String(values[1]),
+        reason: String(values[2]),
+        details: values[3] as JsonObject | null,
+        created_at: values[4] as Date,
     };
 }
 

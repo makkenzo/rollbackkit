@@ -1,9 +1,13 @@
 import {
+    type ActionConflict,
     type ActionRun,
+    type ActionSideEffect,
     type Clock,
     type CreateActionRunInput,
     type CreateSnapshotInput,
     type JsonValue,
+    type RecordConflictInput,
+    type RecordSideEffectInput,
     RollbackKitError,
     type Snapshot,
     systemClock,
@@ -11,7 +15,16 @@ import {
 } from '@rollbackkit/core';
 
 import { createRollbackKitPostgresId } from './id';
-import { type ActionRunRow, mapActionRunRow, mapSnapshotRow, type SnapshotRow } from './mappers';
+import {
+    type ActionConflictRow,
+    type ActionRunRow,
+    type ActionSideEffectRow,
+    mapActionConflictRow,
+    mapActionRunRow,
+    mapActionSideEffectRow,
+    mapSnapshotRow,
+    type SnapshotRow,
+} from './mappers';
 import type { PostgresQueryExecutor } from './migration-runner';
 
 const ACTION_RUN_COLUMNS_SQL = `
@@ -47,6 +60,25 @@ key,
 value,
 created_at,
 metadata
+`;
+
+const SIDE_EFFECT_COLUMNS_SQL = `
+id,
+action_run_id,
+type,
+status,
+reversibility,
+payload,
+created_at,
+metadata
+`;
+
+const CONFLICT_COLUMNS_SQL = `
+id,
+action_run_id,
+reason,
+details,
+created_at
 `;
 
 export interface PostgresStoreOptions {
@@ -250,6 +282,113 @@ ORDER BY created_at ASC, id ASC
         );
 
         return result.rows.map(mapSnapshotRow);
+    }
+
+    async recordSideEffect<TPayload extends JsonValue = JsonValue>(
+        input: RecordSideEffectInput<TPayload>,
+    ): Promise<ActionSideEffect<TPayload>> {
+        const id = createRollbackKitPostgresId('effect');
+        const createdAt = this.#clock.now();
+
+        const result = await this.#executor.query<ActionSideEffectRow>(
+            `
+INSERT INTO rollbackkit_side_effects (
+    id,
+    action_run_id,
+    type,
+    status,
+    reversibility,
+    payload,
+    created_at,
+    metadata
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5::jsonb,
+    $6::jsonb,
+    $7,
+    $8::jsonb
+)
+RETURNING ${SIDE_EFFECT_COLUMNS_SQL}
+`,
+            [
+                id,
+                input.actionRunId,
+                input.type,
+                input.status,
+                input.reversibility,
+                input.payload === undefined ? null : input.payload,
+                createdAt,
+                input.metadata === undefined ? null : input.metadata,
+            ],
+        );
+
+        const row = result.rows[0];
+
+        if (row === undefined) {
+            throw new RollbackKitError({
+                code: 'STORAGE_ERROR',
+                message: 'PostgreSQL did not return a side effect after insert.',
+                details: {
+                    operation: 'recordSideEffect',
+                    actionRunId: input.actionRunId,
+                    type: input.type,
+                },
+            });
+        }
+
+        return mapActionSideEffectRow(row) as ActionSideEffect<TPayload>;
+    }
+
+    async recordConflict(input: RecordConflictInput): Promise<ActionConflict> {
+        const id = createRollbackKitPostgresId('conflict');
+        const createdAt = this.#clock.now();
+
+        const result = await this.#executor.query<ActionConflictRow>(
+            `
+INSERT INTO rollbackkit_conflicts (
+    id,
+    action_run_id,
+    reason,
+    details,
+    created_at
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4::jsonb,
+    $5
+)
+RETURNING ${CONFLICT_COLUMNS_SQL}
+`,
+            [
+                id,
+                input.actionRunId,
+                input.reason,
+                input.details === undefined ? null : input.details,
+                createdAt,
+            ],
+        );
+
+        const row = result.rows[0];
+
+        if (row === undefined) {
+            throw new RollbackKitError({
+                code: 'STORAGE_ERROR',
+                message: 'PostgreSQL did not return a conflict after insert.',
+                details: {
+                    operation: 'recordConflict',
+                    actionRunId: input.actionRunId,
+                    reason: input.reason,
+                },
+            });
+        }
+
+        return mapActionConflictRow(row);
     }
 }
 
