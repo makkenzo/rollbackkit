@@ -1,7 +1,8 @@
-export {
-    createRollbackKit,
-    type ExecuteActionRequest,
-    type PreviewActionRequest,
-    RollbackKit,
-    type RollbackKitOptions,
+export type {
+    ExecuteActionRequest,
+    PreviewActionRequest,
+    RollbackKitOptions,
+    UndoActionRequest,
 } from './rollbackkit';
+
+export { createRollbackKit, RollbackKit } from './rollbackkit';

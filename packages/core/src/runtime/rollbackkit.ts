@@ -10,12 +10,12 @@ import type { ActionActor } from '../identity/actor';
 import type { ActionTarget } from '../identity/target';
 import type { ActionPhase, ActionRun } from '../lifecycle/lifecycle';
 import type { PreviewResult } from '../lifecycle/preview';
-import type { Reversibility } from '../lifecycle/reversibility';
+import { isUndoable, type Reversibility } from '../lifecycle/reversibility';
 import { isJsonValue, type JsonObject, type JsonValue } from '../shared/json';
 import type { Clock } from '../shared/time';
 import { systemClock } from '../shared/time';
 import { createMemoryStorageAdapter } from '../storage/memory-storage';
-import type { Snapshot, SnapshotRecorder } from '../storage/snapshot';
+import type { Snapshot, SnapshotReader, SnapshotRecorder } from '../storage/snapshot';
 import type { StorageAdapter } from '../storage/storage';
 
 export interface RollbackKitOptions {
@@ -23,6 +23,12 @@ export interface RollbackKitOptions {
     readonly actions?: readonly ActionDefinition[];
     readonly storage?: StorageAdapter;
     readonly clock?: Clock;
+}
+
+export interface UndoActionRequest {
+    readonly actionRunId: string;
+    readonly actor: ActionActor;
+    readonly metadata?: JsonObject;
 }
 
 export interface PreviewActionRequest {
@@ -166,6 +172,73 @@ export class RollbackKit {
             throw rollbackError;
         }
     }
+
+    async undo(request: UndoActionRequest): Promise<ActionRun> {
+        const existingRun = await this.storage.getActionRun(request.actionRunId);
+
+        if (existingRun === null) {
+            throw createActionRunNotFoundError(request.actionRunId);
+        }
+
+        const action = this.registry.require(existingRun.name);
+
+        return this.storage.withActionRunLock(request.actionRunId, async (lockedRun) => {
+            assertActionRunCanBeUndone(lockedRun, this.#clock.now());
+
+            if (action.undo === undefined) {
+                throw createActionNotUndoableError(
+                    lockedRun,
+                    'Action definition does not provide an undo handler.',
+                );
+            }
+
+            const baseContext = createBaseActionContextFromRun({
+                actionName: action.name,
+                run: lockedRun,
+                actor: request.actor,
+                clock: this.#clock,
+                ...(request.metadata === undefined ? {} : { metadata: request.metadata }),
+            });
+
+            await authorizeAction(action, {
+                ...baseContext,
+                phase: 'undo',
+            });
+
+            const undoRunningRun = await this.storage.updateActionRun(lockedRun.id, {
+                status: 'undo_running',
+                undoStartedAt: this.#clock.now(),
+            });
+
+            try {
+                const result = await action.undo({
+                    ...baseContext,
+                    phase: 'undo',
+                    run: undoRunningRun,
+                    snapshots: new BoundSnapshotReader(this.storage, lockedRun.id),
+                });
+
+                const undoneMetadata = mergeMetadata(undoRunningRun.metadata, result.metadata);
+
+                return await this.storage.updateActionRun(lockedRun.id, {
+                    status: 'undone',
+                    undoneAt: this.#clock.now(),
+                    undoneBy: request.actor,
+                    ...(result.data === undefined ? {} : { undoResult: result.data }),
+                    ...(undoneMetadata === undefined ? {} : { metadata: undoneMetadata }),
+                });
+            } catch (error) {
+                const rollbackError = normalizeUndoError(action.name, error);
+
+                await this.storage.updateActionRun(lockedRun.id, {
+                    status: 'undo_failed',
+                    error: rollbackError.toJSON(),
+                });
+
+                throw rollbackError;
+            }
+        });
+    }
 }
 
 export function createRollbackKit(options?: RollbackKitOptions): RollbackKit {
@@ -177,6 +250,14 @@ interface CreateBaseActionContextInput {
     readonly input: JsonValue;
     readonly request: PreviewActionRequest | ExecuteActionRequest;
     readonly target?: ActionTarget;
+    readonly clock: Clock;
+}
+
+interface CreateBaseActionContextFromRunInput {
+    readonly actionName: string;
+    readonly run: ActionRun;
+    readonly actor: ActionActor;
+    readonly metadata?: JsonObject;
     readonly clock: Clock;
 }
 
@@ -203,6 +284,27 @@ class BoundSnapshotRecorder implements SnapshotRecorder {
     }
 }
 
+class BoundSnapshotReader implements SnapshotReader {
+    readonly #storage: StorageAdapter;
+    readonly #actionRunId: string;
+
+    constructor(storage: StorageAdapter, actionRunId: string) {
+        this.#storage = storage;
+        this.#actionRunId = actionRunId;
+    }
+
+    async get<TValue extends JsonValue = JsonValue>(key: string): Promise<Snapshot<TValue> | null> {
+        const snapshots = await this.#storage.getSnapshots(this.#actionRunId);
+        const snapshot = [...snapshots].reverse().find((item) => item.key === key);
+
+        return snapshot === undefined ? null : (snapshot as Snapshot<TValue>);
+    }
+
+    async list(): Promise<readonly Snapshot[]> {
+        return this.#storage.getSnapshots(this.#actionRunId);
+    }
+}
+
 function createBaseActionContext(
     input: CreateBaseActionContextInput,
 ): BaseActionContext<JsonValue> {
@@ -214,6 +316,20 @@ function createBaseActionContext(
         ...(input.request.tenantId === undefined ? {} : { tenantId: input.request.tenantId }),
         ...(input.target === undefined ? {} : { target: input.target }),
         ...(input.request.metadata === undefined ? {} : { metadata: input.request.metadata }),
+    };
+}
+
+function createBaseActionContextFromRun(
+    input: CreateBaseActionContextFromRunInput,
+): BaseActionContext<JsonValue> {
+    return {
+        actionName: input.actionName,
+        input: input.run.input,
+        actor: input.actor,
+        clock: input.clock,
+        ...(input.run.tenantId === undefined ? {} : { tenantId: input.run.tenantId }),
+        ...(input.run.target === undefined ? {} : { target: input.run.target }),
+        ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
     };
 }
 
@@ -377,6 +493,80 @@ function normalizeExecutionError(actionName: string, error: unknown): RollbackKi
     return new RollbackKitError({
         code: 'ACTION_EXECUTION_FAILED',
         message: `Action "${actionName}" execution failed.`,
+        details: {
+            actionName,
+        },
+        cause: error,
+    });
+}
+
+function assertActionRunCanBeUndone(run: ActionRun, now: Date): void {
+    if (run.status === 'undone') {
+        throw new RollbackKitError({
+            code: 'ACTION_ALREADY_UNDONE',
+            message: `Action run "${run.id}" has already been undone.`,
+            details: {
+                actionRunId: run.id,
+                actionName: run.name,
+            },
+        });
+    }
+
+    if (run.status !== 'completed') {
+        throw createActionNotUndoableError(
+            run,
+            `Action run status is "${run.status}". Only completed action runs can be undone.`,
+        );
+    }
+
+    if (!isUndoable(run.reversibility)) {
+        throw createActionNotUndoableError(run, 'Action run reversibility is not undoable.');
+    }
+
+    if (run.undoExpiresAt !== undefined && run.undoExpiresAt.getTime() <= now.getTime()) {
+        throw new RollbackKitError({
+            code: 'ACTION_UNDO_EXPIRED',
+            message: `Action run "${run.id}" undo window has expired.`,
+            details: {
+                actionRunId: run.id,
+                actionName: run.name,
+                undoExpiresAt: run.undoExpiresAt.toISOString(),
+            },
+        });
+    }
+}
+
+function createActionRunNotFoundError(actionRunId: string): RollbackKitError {
+    return new RollbackKitError({
+        code: 'ACTION_NOT_FOUND',
+        message: `Action run "${actionRunId}" was not found.`,
+        details: {
+            actionRunId,
+        },
+    });
+}
+
+function createActionNotUndoableError(run: ActionRun, reason: string): RollbackKitError {
+    return new RollbackKitError({
+        code: 'ACTION_NOT_UNDOABLE',
+        message: `Action run "${run.id}" cannot be undone: ${reason}`,
+        details: {
+            actionRunId: run.id,
+            actionName: run.name,
+            status: run.status,
+            reason,
+        },
+    });
+}
+
+function normalizeUndoError(actionName: string, error: unknown): RollbackKitError {
+    if (isRollbackKitError(error)) {
+        return error;
+    }
+
+    return new RollbackKitError({
+        code: 'ACTION_UNDO_FAILED',
+        message: `Action "${actionName}" undo failed.`,
         details: {
             actionName,
         },

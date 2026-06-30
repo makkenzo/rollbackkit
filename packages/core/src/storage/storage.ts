@@ -25,6 +25,7 @@ export interface UpdateActionRunInput<TResult extends JsonValue = JsonValue> {
     readonly undoneAt?: Date;
     readonly undoneBy?: ActionActor;
     readonly result?: TResult;
+    readonly undoResult?: JsonValue;
     readonly error?: SerializedRollbackKitError;
     readonly metadata?: JsonObject;
 }

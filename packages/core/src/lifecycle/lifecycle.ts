@@ -36,6 +36,7 @@ export interface ActionRun<
     readonly undoneAt?: Date;
     readonly undoneBy?: ActionActor;
     readonly result?: TResult;
+    readonly undoResult?: JsonValue;
     readonly error?: SerializedRollbackKitError;
     readonly metadata?: JsonObject;
 }

@@ -78,6 +78,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
             ...(input.undoneAt === undefined ? {} : { undoneAt: input.undoneAt }),
             ...(input.undoneBy === undefined ? {} : { undoneBy: input.undoneBy }),
             ...(input.result === undefined ? {} : { result: input.result }),
+            ...(input.undoResult === undefined ? {} : { undoResult: input.undoResult }),
             ...(input.error === undefined ? {} : { error: input.error }),
             ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
         } as ActionRun<JsonValue, TResult>;
