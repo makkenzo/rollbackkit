@@ -6,6 +6,8 @@ import {
     type JsonValue,
     REVERSIBILITY,
     type Reversibility,
+    RollbackKitError,
+    type SerializedRollbackKitError,
 } from '@rollbackkit/core';
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
@@ -37,6 +39,24 @@ class FakePostgresExecutor implements PostgresQueryExecutor {
             this.actionRunRows.set(row.id, row);
 
             return createQueryResult([row] as unknown as TResult[]);
+        }
+
+        if (text.includes('UPDATE rollbackkit_action_runs')) {
+            if (values === undefined) {
+                throw new Error('Expected update query values.');
+            }
+
+            const id = String(values[0]);
+            const existing = this.actionRunRows.get(id);
+
+            if (existing === undefined) {
+                return createQueryResult([]);
+            }
+
+            const updated = applyActionRunUpdateQuery(existing, text, values);
+            this.actionRunRows.set(id, updated);
+
+            return createQueryResult([updated] as unknown as TResult[]);
         }
 
         if (text.includes('FROM rollbackkit_action_runs') && text.includes('WHERE id = $1')) {
@@ -153,6 +173,146 @@ describe('PostgresStore action runs', () => {
         await expect(store.getActionRun(created.id)).resolves.toEqual(created);
     });
 
+    it('updates action runs', async () => {
+        const now = new Date('2026-01-01T00:00:00.000Z');
+        const executedAt = new Date('2026-01-01T00:00:01.000Z');
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+            clock: {
+                now: () => now,
+            },
+        });
+
+        const created = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const updated = await store.updateActionRun(created.id, {
+            status: 'completed',
+            executedAt,
+            result: {
+                archived: true,
+            },
+            metadata: {
+                source: 'execute',
+            },
+        });
+
+        expect(updated).toEqual({
+            ...created,
+            status: 'completed',
+            executedAt,
+            result: {
+                archived: true,
+            },
+            metadata: {
+                source: 'execute',
+            },
+        });
+
+        const updateQuery = executor.queries.find((query) =>
+            query.text.includes('UPDATE rollbackkit_action_runs'),
+        );
+
+        expect(updateQuery?.text).toContain('status = $2');
+        expect(updateQuery?.text).toContain('executed_at = $3');
+        expect(updateQuery?.text).toContain('result = $4::jsonb');
+        expect(updateQuery?.text).toContain('metadata = $5::jsonb');
+        expect(updateQuery?.values).toEqual([
+            created.id,
+            'completed',
+            executedAt,
+            {
+                archived: true,
+            },
+            {
+                source: 'execute',
+            },
+        ]);
+    });
+
+    it('updates undo fields', async () => {
+        const now = new Date('2026-01-01T00:00:00.000Z');
+        const undoStartedAt = new Date('2026-01-01T00:00:05.000Z');
+        const undoneAt = new Date('2026-01-01T00:00:06.000Z');
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+            clock: {
+                now: () => now,
+            },
+        });
+
+        const created = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const updated = await store.updateActionRun(created.id, {
+            status: 'undone',
+            undoStartedAt,
+            undoneAt,
+            undoneBy: actor,
+            undoResult: {
+                restored: true,
+            },
+        });
+
+        expect(updated).toEqual({
+            ...created,
+            status: 'undone',
+            undoStartedAt,
+            undoneAt,
+            undoneBy: actor,
+            undoResult: {
+                restored: true,
+            },
+        });
+    });
+
+    it('returns existing action run for empty updates', async () => {
+        const executor = new FakePostgresExecutor();
+        const store = createPostgresStore({ executor });
+
+        const created = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            input: {},
+            reversibility: REVERSIBILITY.full,
+        });
+
+        await expect(store.updateActionRun(created.id, {})).resolves.toEqual(created);
+
+        const updateQuery = executor.queries.find((query) =>
+            query.text.includes('UPDATE rollbackkit_action_runs'),
+        );
+
+        expect(updateQuery).toBeUndefined();
+    });
+
+    it('throws when updating a missing action run', async () => {
+        const executor = new FakePostgresExecutor();
+        const store = createPostgresStore({ executor });
+
+        await expect(
+            store.updateActionRun('missing_run', {
+                status: 'completed',
+            }),
+        ).rejects.toBeInstanceOf(RollbackKitError);
+    });
+
     it('returns null when action run does not exist', async () => {
         const executor = new FakePostgresExecutor();
         const store = createPostgresStore({ executor });
@@ -193,6 +353,57 @@ function createActionRunRowFromInsertValues(values: readonly unknown[]): ActionR
         error: null,
         metadata: values[15] as JsonObject | null,
     };
+}
+
+function applyActionRunUpdateQuery(
+    row: ActionRunRow,
+    text: string,
+    values: readonly unknown[],
+): ActionRunRow {
+    return {
+        ...row,
+        status: readUpdatedValue(text, values, 'status', row.status) as ActionRunStatus,
+        executed_at: readUpdatedValue(text, values, 'executed_at', row.executed_at) as Date | null,
+        undo_started_at: readUpdatedValue(
+            text,
+            values,
+            'undo_started_at',
+            row.undo_started_at,
+        ) as Date | null,
+        undone_at: readUpdatedValue(text, values, 'undone_at', row.undone_at) as Date | null,
+        undone_by: readUpdatedValue(text, values, 'undone_by', row.undone_by) as ActionActor | null,
+        result: readUpdatedValue(text, values, 'result', row.result) as JsonValue | null,
+        undo_result: readUpdatedValue(
+            text,
+            values,
+            'undo_result',
+            row.undo_result,
+        ) as JsonValue | null,
+        error: readUpdatedValue(
+            text,
+            values,
+            'error',
+            row.error,
+        ) as SerializedRollbackKitError | null,
+        metadata: readUpdatedValue(text, values, 'metadata', row.metadata) as JsonObject | null,
+    };
+}
+
+function readUpdatedValue(
+    text: string,
+    values: readonly unknown[],
+    column: string,
+    currentValue: unknown,
+): unknown {
+    const match = new RegExp(`\\b${column}\\s*=\\s*\\$(\\d+)`).exec(text);
+
+    if (match?.[1] === undefined) {
+        return currentValue;
+    }
+
+    const valueIndex = Number(match[1]) - 1;
+
+    return values[valueIndex];
 }
 
 function createQueryResult<TResult extends QueryResultRow>(rows: TResult[]): QueryResult<TResult> {
