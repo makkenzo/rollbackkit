@@ -2,39 +2,34 @@ import 'server-only';
 
 import { defineAction, type JsonObject, REVERSIBILITY, RollbackKitError } from '@rollbackkit/core';
 import type { PostgresQueryExecutor } from '@rollbackkit/postgres';
-import type { QueryResultRow } from 'pg';
+import {
+    changeDemoMemberRole,
+    type DemoEditableMemberRole,
+    type DemoMemberRecord,
+    type DemoMemberStorageRole,
+    findDemoMemberById,
+} from '../repositories/member-repository';
 
 export const MEMBER_CHANGE_ROLE_ACTION_NAME = 'member.change_role';
 
 const MEMBER_CHANGE_ROLE_UNDO_WINDOW_MS = 30 * 60 * 1000;
 const PREVIOUS_MEMBER_ROLE_SNAPSHOT_KEY = 'previousMemberRole';
 
-type MemberStorageRole = 'owner' | 'admin' | 'viewer';
-type EditableMemberRole = 'admin' | 'viewer';
-
 type MemberChangeRoleInput = JsonObject & {
     readonly memberId: string;
-    readonly role: EditableMemberRole;
+    readonly role: DemoEditableMemberRole;
 };
 
 interface MemberChangeRoleResult extends JsonObject {
     readonly memberId: string;
-    readonly role: MemberStorageRole;
-    readonly previousRole: MemberStorageRole;
+    readonly role: DemoMemberStorageRole;
+    readonly previousRole: DemoMemberStorageRole;
 }
 
 interface PreviousMemberRoleSnapshot extends JsonObject {
     readonly memberId: string;
-    readonly previousRole: MemberStorageRole;
-    readonly changedToRole: EditableMemberRole;
-}
-
-interface MemberRow extends QueryResultRow {
-    readonly id: string;
-    readonly workspace_id: string;
-    readonly name: string;
-    readonly email: string;
-    readonly role: MemberStorageRole;
+    readonly previousRole: DemoMemberStorageRole;
+    readonly changedToRole: DemoEditableMemberRole;
 }
 
 export function createMemberChangeRoleAction(executor: PostgresQueryExecutor) {
@@ -203,8 +198,8 @@ function parseMemberChangeRoleInput(input: unknown): MemberChangeRoleInput {
 async function getMemberOrThrow(
     executor: PostgresQueryExecutor,
     memberId: string,
-): Promise<MemberRow> {
-    const member = await getMemberById(executor, memberId);
+): Promise<DemoMemberRecord> {
+    const member = await findDemoMemberById(executor, memberId);
 
     if (member === null) {
         throw new RollbackKitError({
@@ -219,41 +214,14 @@ async function getMemberOrThrow(
     return member;
 }
 
-async function getMemberById(
-    executor: PostgresQueryExecutor,
-    memberId: string,
-): Promise<MemberRow | null> {
-    const result = await executor.query<MemberRow>(
-        `
-SELECT id, workspace_id, name, email, role
-FROM demo_members
-WHERE id = $1
-LIMIT 1
-`,
-        [memberId],
-    );
-
-    return result.rows[0] ?? null;
-}
-
 async function changeMemberRole(
     executor: PostgresQueryExecutor,
     memberId: string,
-    role: MemberStorageRole,
-): Promise<MemberRow> {
-    const result = await executor.query<MemberRow>(
-        `
-UPDATE demo_members
-SET role = $2
-WHERE id = $1
-RETURNING id, workspace_id, name, email, role
-`,
-        [memberId, role],
-    );
+    role: DemoMemberStorageRole,
+): Promise<DemoMemberRecord> {
+    const member = await changeDemoMemberRole(executor, memberId, role);
 
-    const member = result.rows[0];
-
-    if (member === undefined) {
+    if (member === null) {
         throw new RollbackKitError({
             code: 'ACTION_NOT_FOUND',
             message: `Member "${memberId}" was not found.`,
@@ -267,8 +235,8 @@ RETURNING id, workspace_id, name, email, role
 }
 
 function createPreviousMemberRoleSnapshot(
-    member: MemberRow,
-    changedToRole: EditableMemberRole,
+    member: DemoMemberRecord,
+    changedToRole: DemoEditableMemberRole,
 ): PreviousMemberRoleSnapshot {
     return {
         memberId: member.id,
@@ -277,7 +245,7 @@ function createPreviousMemberRoleSnapshot(
     };
 }
 
-function assertMemberCanChangeRole(member: MemberRow): void {
+function assertMemberCanChangeRole(member: DemoMemberRecord): void {
     if (member.role !== 'owner') {
         return;
     }
@@ -288,7 +256,7 @@ function assertMemberCanChangeRole(member: MemberRow): void {
     );
 }
 
-function formatRoleLabel(role: MemberStorageRole): string {
+function formatRoleLabel(role: DemoMemberStorageRole): string {
     switch (role) {
         case 'owner':
             return 'Owner';

@@ -2,14 +2,18 @@ import 'server-only';
 
 import { defineAction, type JsonObject, REVERSIBILITY, RollbackKitError } from '@rollbackkit/core';
 import type { PostgresQueryExecutor } from '@rollbackkit/postgres';
-import type { QueryResultRow } from 'pg';
+import {
+    archiveDemoProject,
+    type DemoProjectRecord,
+    type DemoProjectStorageStatus,
+    findDemoProjectById,
+    restoreDemoProject,
+} from '../repositories/project-repository';
 
 export const PROJECT_ARCHIVE_ACTION_NAME = 'project.archive';
 
 const PROJECT_ARCHIVE_UNDO_WINDOW_MS = 30 * 60 * 1000;
 const PREVIOUS_PROJECT_STATE_SNAPSHOT_KEY = 'previousProjectState';
-
-type ProjectStorageStatus = 'active' | 'archived';
 
 type ProjectArchiveInput = JsonObject & {
     readonly projectId: string;
@@ -17,24 +21,15 @@ type ProjectArchiveInput = JsonObject & {
 
 interface ProjectArchiveResult extends JsonObject {
     readonly projectId: string;
-    readonly status: ProjectStorageStatus;
+    readonly status: DemoProjectStorageStatus;
     readonly archivedAt: string | null;
 }
 
 interface PreviousProjectStateSnapshot extends JsonObject {
     readonly projectId: string;
-    readonly status: ProjectStorageStatus;
+    readonly status: DemoProjectStorageStatus;
     readonly archivedAt: string | null;
     readonly updatedAt: string;
-}
-
-interface ProjectRow extends QueryResultRow {
-    readonly id: string;
-    readonly name: string;
-    readonly status: ProjectStorageStatus;
-    readonly archived_at: Date | string | null;
-    readonly updated_at: Date | string;
-    readonly document_count: number | string;
 }
 
 export function createProjectArchiveAction(executor: PostgresQueryExecutor) {
@@ -171,8 +166,8 @@ function parseProjectArchiveInput(input: unknown): ProjectArchiveInput {
 async function getProjectOrThrow(
     executor: PostgresQueryExecutor,
     projectId: string,
-): Promise<ProjectRow> {
-    const project = await getProjectById(executor, projectId);
+): Promise<DemoProjectRecord> {
+    const project = await findDemoProjectById(executor, projectId);
 
     if (project === null) {
         throw new RollbackKitError({
@@ -187,52 +182,11 @@ async function getProjectOrThrow(
     return project;
 }
 
-async function getProjectById(
-    executor: PostgresQueryExecutor,
-    projectId: string,
-): Promise<ProjectRow | null> {
-    const result = await executor.query<ProjectRow>(
-        `
-SELECT
-    demo_projects.id,
-    demo_projects.name,
-    demo_projects.status,
-    demo_projects.archived_at,
-    demo_projects.updated_at,
-    COUNT(demo_documents.id)::int AS document_count
-FROM demo_projects
-LEFT JOIN demo_documents
-    ON demo_documents.project_id = demo_projects.id
-WHERE demo_projects.id = $1
-GROUP BY
-    demo_projects.id,
-    demo_projects.name,
-    demo_projects.status,
-    demo_projects.archived_at,
-    demo_projects.updated_at
-LIMIT 1
-`,
-        [projectId],
-    );
-
-    return result.rows[0] ?? null;
-}
-
 async function archiveProject(
     executor: PostgresQueryExecutor,
     projectId: string,
-): Promise<ProjectRow> {
-    await executor.query(
-        `
-UPDATE demo_projects
-SET
-    status = 'archived',
-    archived_at = now(),
-    updated_at = now()
-WHERE id = $1
-`,
-        [projectId],
-    );
+): Promise<DemoProjectRecord> {
+    await archiveDemoProject(executor, projectId);
 
     return getProjectOrThrow(executor, projectId);
 }
@@ -240,23 +194,15 @@ WHERE id = $1
 async function restoreProject(
     executor: PostgresQueryExecutor,
     snapshot: PreviousProjectStateSnapshot,
-): Promise<ProjectRow> {
-    await executor.query(
-        `
-UPDATE demo_projects
-SET
-    status = $2,
-    archived_at = $3,
-    updated_at = $4
-WHERE id = $1
-`,
-        [snapshot.projectId, snapshot.status, snapshot.archivedAt, snapshot.updatedAt],
-    );
+): Promise<DemoProjectRecord> {
+    await restoreDemoProject(executor, snapshot);
 
     return getProjectOrThrow(executor, snapshot.projectId);
 }
 
-function createPreviousProjectStateSnapshot(project: ProjectRow): PreviousProjectStateSnapshot {
+function createPreviousProjectStateSnapshot(
+    project: DemoProjectRecord,
+): PreviousProjectStateSnapshot {
     return {
         projectId: project.id,
         status: project.status,
@@ -265,7 +211,7 @@ function createPreviousProjectStateSnapshot(project: ProjectRow): PreviousProjec
     };
 }
 
-function mapProjectResult(project: ProjectRow): ProjectArchiveResult {
+function mapProjectResult(project: DemoProjectRecord): ProjectArchiveResult {
     return {
         projectId: project.id,
         status: project.status,

@@ -179,9 +179,9 @@ ORDER BY created_at ASC
         await expect(readProjectOwner(currentClient, 'project_member_remove_owned')).resolves.toBe(
             'member_remove_target',
         );
-        await expect(readDocumentOwner(currentClient, 'document_member_remove_owned')).resolves.toBe(
-            'member_remove_target',
-        );
+        await expect(
+            readDocumentOwner(currentClient, 'document_member_remove_owned'),
+        ).resolves.toBe('member_remove_target');
     });
 
     it('blocks owner removal', async () => {

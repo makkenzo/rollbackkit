@@ -2,14 +2,26 @@ import 'server-only';
 
 import { defineAction, type JsonObject, REVERSIBILITY, RollbackKitError } from '@rollbackkit/core';
 import type { PostgresQueryExecutor } from '@rollbackkit/postgres';
-import type { QueryResultRow } from 'pg';
+import {
+    type DemoMemberRecord,
+    type DemoMemberStorageRole,
+    type DemoOwnershipImpact,
+    deleteDemoMember,
+    demoWorkspaceExists,
+    findDemoMemberById,
+    findDemoMemberByWorkspaceEmail,
+    findDemoOwnedDocumentsByIds,
+    findDemoOwnedProjectsByIds,
+    insertDemoMember,
+    readDemoOwnershipImpact,
+    restoreDemoDocumentOwnerLinks,
+    restoreDemoProjectOwnerLinks,
+} from '../repositories/member-repository';
 
 export const MEMBER_REMOVE_ACTION_NAME = 'member.remove';
 
 const MEMBER_REMOVE_UNDO_WINDOW_MS = 30 * 60 * 1000;
 const REMOVED_MEMBER_STATE_SNAPSHOT_KEY = 'removedMemberState';
-
-type MemberStorageRole = 'owner' | 'admin' | 'viewer';
 
 type MemberRemoveInput = JsonObject & {
     readonly memberId: string;
@@ -18,7 +30,7 @@ type MemberRemoveInput = JsonObject & {
 interface MemberRemoveExecuteResult extends JsonObject {
     readonly memberId: string;
     readonly status: 'removed';
-    readonly role: MemberStorageRole;
+    readonly role: DemoMemberStorageRole;
     readonly projectOwnerLinksCleared: number;
     readonly documentOwnerLinksCleared: number;
 }
@@ -26,7 +38,7 @@ interface MemberRemoveExecuteResult extends JsonObject {
 interface MemberRemoveUndoResult extends JsonObject {
     readonly memberId: string;
     readonly status: 'restored';
-    readonly role: MemberStorageRole;
+    readonly role: DemoMemberStorageRole;
     readonly projectOwnerLinksRestored: number;
     readonly documentOwnerLinksRestored: number;
 }
@@ -36,42 +48,8 @@ interface RemovedMemberStateSnapshot extends JsonObject {
     readonly workspaceId: string;
     readonly name: string;
     readonly email: string;
-    readonly role: MemberStorageRole;
+    readonly role: DemoMemberStorageRole;
     readonly createdAt: string;
-    readonly ownedProjectIds: readonly string[];
-    readonly ownedDocumentIds: readonly string[];
-}
-
-interface MemberRow extends QueryResultRow {
-    readonly id: string;
-    readonly workspace_id: string;
-    readonly name: string;
-    readonly email: string;
-    readonly role: MemberStorageRole;
-    readonly created_at: Date | string;
-}
-
-interface OwnedTargetRow extends QueryResultRow {
-    readonly id: string;
-    readonly name: string;
-    readonly owner_member_id: string | null;
-}
-
-interface OwnedDocumentRow extends QueryResultRow {
-    readonly id: string;
-    readonly title: string;
-    readonly owner_member_id: string | null;
-}
-
-interface ExistingMemberByEmailRow extends QueryResultRow {
-    readonly id: string;
-}
-
-interface WorkspaceRow extends QueryResultRow {
-    readonly id: string;
-}
-
-interface OwnershipImpact {
     readonly ownedProjectIds: readonly string[];
     readonly ownedDocumentIds: readonly string[];
 }
@@ -182,13 +160,13 @@ export function createMemberRemoveAction(executor: PostgresQueryExecutor) {
 
             const restoredMember = await restoreMember(executor, snapshot.value);
 
-            const restoredProjectOwnerLinks = await restoreProjectOwnerLinks(
+            const restoredProjectOwnerLinks = await restoreDemoProjectOwnerLinks(
                 executor,
                 restoredMember.id,
                 snapshot.value.ownedProjectIds,
             );
 
-            const restoredDocumentOwnerLinks = await restoreDocumentOwnerLinks(
+            const restoredDocumentOwnerLinks = await restoreDemoDocumentOwnerLinks(
                 executor,
                 restoredMember.id,
                 snapshot.value.ownedDocumentIds,
@@ -231,7 +209,7 @@ function parseMemberRemoveInput(input: unknown): MemberRemoveInput {
 async function getMemberOrThrow(
     executor: PostgresQueryExecutor,
     memberId: string,
-): Promise<MemberRow> {
+): Promise<DemoMemberRecord> {
     const member = await getMemberById(executor, memberId);
 
     if (member === null) {
@@ -250,64 +228,24 @@ async function getMemberOrThrow(
 async function getMemberById(
     executor: PostgresQueryExecutor,
     memberId: string,
-): Promise<MemberRow | null> {
-    const result = await executor.query<MemberRow>(
-        `
-SELECT id, workspace_id, name, email, role, created_at
-FROM demo_members
-WHERE id = $1
-LIMIT 1
-`,
-        [memberId],
-    );
-
-    return result.rows[0] ?? null;
+): Promise<DemoMemberRecord | null> {
+    return findDemoMemberById(executor, memberId);
 }
 
 async function getOwnershipImpact(
     executor: PostgresQueryExecutor,
     memberId: string,
-): Promise<OwnershipImpact> {
-    const [projectsResult, documentsResult] = await Promise.all([
-        executor.query<OwnedTargetRow>(
-            `
-SELECT id, name, owner_member_id
-FROM demo_projects
-WHERE owner_member_id = $1
-ORDER BY id ASC
-`,
-            [memberId],
-        ),
-        executor.query<OwnedDocumentRow>(
-            `
-SELECT id, title, owner_member_id
-FROM demo_documents
-WHERE owner_member_id = $1
-ORDER BY id ASC
-`,
-            [memberId],
-        ),
-    ]);
-
-    return {
-        ownedProjectIds: projectsResult.rows.map((row) => row.id),
-        ownedDocumentIds: documentsResult.rows.map((row) => row.id),
-    };
+): Promise<DemoOwnershipImpact> {
+    return readDemoOwnershipImpact(executor, memberId);
 }
 
-async function removeMember(executor: PostgresQueryExecutor, memberId: string): Promise<MemberRow> {
-    const result = await executor.query<MemberRow>(
-        `
-DELETE FROM demo_members
-WHERE id = $1
-RETURNING id, workspace_id, name, email, role, created_at
-`,
-        [memberId],
-    );
+async function removeMember(
+    executor: PostgresQueryExecutor,
+    memberId: string,
+): Promise<DemoMemberRecord> {
+    const member = await deleteDemoMember(executor, memberId);
 
-    const member = result.rows[0];
-
-    if (member === undefined) {
+    if (member === null) {
         throw new RollbackKitError({
             code: 'ACTION_NOT_FOUND',
             message: `Member "${memberId}" was not found.`,
@@ -323,26 +261,10 @@ RETURNING id, workspace_id, name, email, role, created_at
 async function restoreMember(
     executor: PostgresQueryExecutor,
     snapshot: RemovedMemberStateSnapshot,
-): Promise<MemberRow> {
-    const result = await executor.query<MemberRow>(
-        `
-INSERT INTO demo_members (id, workspace_id, name, email, role, created_at)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, workspace_id, name, email, role, created_at
-`,
-        [
-            snapshot.memberId,
-            snapshot.workspaceId,
-            snapshot.name,
-            snapshot.email,
-            snapshot.role,
-            snapshot.createdAt,
-        ],
-    );
+): Promise<DemoMemberRecord> {
+    const member = await insertDemoMember(executor, snapshot);
 
-    const member = result.rows[0];
-
-    if (member === undefined) {
+    if (member === null) {
         throw new RollbackKitError({
             code: 'STORAGE_ERROR',
             message: 'PostgreSQL did not return restored member after insert.',
@@ -368,40 +290,23 @@ async function assertMemberCanBeRestored(
         );
     }
 
-    const workspaceResult = await executor.query<WorkspaceRow>(
-        `
-SELECT id
-FROM demo_workspaces
-WHERE id = $1
-LIMIT 1
-`,
-        [snapshot.workspaceId],
-    );
-
-    if (workspaceResult.rows[0] === undefined) {
+    if (!(await demoWorkspaceExists(executor, snapshot.workspaceId))) {
         throw createMemberRemoveConflictError(
             snapshot.memberId,
             `Workspace "${snapshot.workspaceId}" no longer exists.`,
         );
     }
 
-    const emailResult = await executor.query<ExistingMemberByEmailRow>(
-        `
-SELECT id
-FROM demo_members
-WHERE workspace_id = $1
-  AND email = $2
-LIMIT 1
-`,
-        [snapshot.workspaceId, snapshot.email],
+    const emailOwnerId = await findDemoMemberByWorkspaceEmail(
+        executor,
+        snapshot.workspaceId,
+        snapshot.email,
     );
 
-    const emailOwner = emailResult.rows[0];
-
-    if (emailOwner !== undefined) {
+    if (emailOwnerId !== null) {
         throw createMemberRemoveConflictError(
             snapshot.memberId,
-            `Email "${snapshot.email}" is already used by member "${emailOwner.id}".`,
+            `Email "${snapshot.email}" is already used by member "${emailOwnerId}".`,
         );
     }
 }
@@ -414,16 +319,9 @@ async function assertOwnedProjectsCanBeRestored(
         return;
     }
 
-    const result = await executor.query<OwnedTargetRow>(
-        `
-SELECT id, name, owner_member_id
-FROM demo_projects
-WHERE id = ANY($1::text[])
-`,
-        [projectIds],
-    );
+    const projects = await findDemoOwnedProjectsByIds(executor, projectIds);
 
-    const existingIds = new Set(result.rows.map((row) => row.id));
+    const existingIds = new Set(projects.map((row) => row.id));
     const missingIds = projectIds.filter((id) => !existingIds.has(id));
 
     if (missingIds.length > 0) {
@@ -433,7 +331,7 @@ WHERE id = ANY($1::text[])
         );
     }
 
-    const reassignedProject = result.rows.find((row) => row.owner_member_id !== null);
+    const reassignedProject = projects.find((row) => row.owner_member_id !== null);
 
     if (reassignedProject !== undefined) {
         throw createMemberRemoveConflictError(
@@ -451,16 +349,9 @@ async function assertOwnedDocumentsCanBeRestored(
         return;
     }
 
-    const result = await executor.query<OwnedDocumentRow>(
-        `
-SELECT id, title, owner_member_id
-FROM demo_documents
-WHERE id = ANY($1::text[])
-`,
-        [documentIds],
-    );
+    const documents = await findDemoOwnedDocumentsByIds(executor, documentIds);
 
-    const existingIds = new Set(result.rows.map((row) => row.id));
+    const existingIds = new Set(documents.map((row) => row.id));
     const missingIds = documentIds.filter((id) => !existingIds.has(id));
 
     if (missingIds.length > 0) {
@@ -470,7 +361,7 @@ WHERE id = ANY($1::text[])
         );
     }
 
-    const reassignedDocument = result.rows.find((row) => row.owner_member_id !== null);
+    const reassignedDocument = documents.find((row) => row.owner_member_id !== null);
 
     if (reassignedDocument !== undefined) {
         throw createMemberRemoveConflictError(
@@ -480,51 +371,9 @@ WHERE id = ANY($1::text[])
     }
 }
 
-async function restoreProjectOwnerLinks(
-    executor: PostgresQueryExecutor,
-    memberId: string,
-    projectIds: readonly string[],
-): Promise<number> {
-    if (projectIds.length === 0) {
-        return 0;
-    }
-
-    const result = await executor.query(
-        `
-UPDATE demo_projects
-SET owner_member_id = $1
-WHERE id = ANY($2::text[])
-`,
-        [memberId, projectIds],
-    );
-
-    return result.rowCount ?? 0;
-}
-
-async function restoreDocumentOwnerLinks(
-    executor: PostgresQueryExecutor,
-    memberId: string,
-    documentIds: readonly string[],
-): Promise<number> {
-    if (documentIds.length === 0) {
-        return 0;
-    }
-
-    const result = await executor.query(
-        `
-UPDATE demo_documents
-SET owner_member_id = $1
-WHERE id = ANY($2::text[])
-`,
-        [memberId, documentIds],
-    );
-
-    return result.rowCount ?? 0;
-}
-
 function createRemovedMemberStateSnapshot(
-    member: MemberRow,
-    ownership: OwnershipImpact,
+    member: DemoMemberRecord,
+    ownership: DemoOwnershipImpact,
 ): RemovedMemberStateSnapshot {
     return {
         memberId: member.id,
@@ -538,7 +387,7 @@ function createRemovedMemberStateSnapshot(
     };
 }
 
-function assertMemberCanBeRemoved(member: MemberRow): void {
+function assertMemberCanBeRemoved(member: DemoMemberRecord): void {
     if (member.role !== 'owner') {
         return;
     }
