@@ -1,6 +1,7 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+
 allowBuilds:
   esbuild: true
   sharp: set this to true or false
@@ -18,6 +19,7 @@ catalog:
   pg: ^8.22.0
   react: 19.2.7
   react-dom: 19.2.7
+  server-only: 0.0.1
 
   tsdown: 0.22.3
   turbo: 2.10.0

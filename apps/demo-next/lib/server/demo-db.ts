@@ -1,3 +1,5 @@
+import 'server-only';
+
 import { Pool } from 'pg';
 
 const DATABASE_URL_ENV_NAMES = ['ROLLBACKKIT_DEMO_DATABASE_URL', 'DATABASE_URL'] as const;
