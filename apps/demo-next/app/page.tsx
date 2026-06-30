@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { MemberRemoveControl } from '@/app/components/member-remove-control';
 import { demoPreviewImpact } from '../lib/demo-data';
 import type { DemoMember, DemoPreviewImpact, DemoProject } from '../lib/demo-domain';
 import { getDemoActionHistory } from '../lib/server/action-history-repository';
@@ -244,11 +245,18 @@ function MembersTable({ members }: MembersTableProps) {
                             <td>{member.email}</td>
                             <td>{member.role}</td>
                             <td className="actions-column">
-                                <MemberRoleChangeControl
-                                    memberId={member.id}
-                                    memberName={member.name}
-                                    role={member.role}
-                                />
+                                <div className="member-actions">
+                                    <MemberRoleChangeControl
+                                        memberId={member.id}
+                                        memberName={member.name}
+                                        role={member.role}
+                                    />
+                                    <MemberRemoveControl
+                                        memberId={member.id}
+                                        memberName={member.name}
+                                        role={member.role}
+                                    />
+                                </div>
                             </td>
                         </tr>
                     ))}

@@ -686,3 +686,13 @@ td:first-child {
     font-size: 0.86rem;
     line-height: 1.5;
 }
+
+.member-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.member-actions .project-action-cell {
+    min-width: auto;
+}
