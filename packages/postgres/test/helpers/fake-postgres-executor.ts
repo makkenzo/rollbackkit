@@ -27,6 +27,10 @@ export interface FakeAppliedMigrationRow extends QueryResultRow {
     readonly applied_at: Date | string;
 }
 
+export interface FakePostgresExecutorOptions {
+    readonly schemaMigrationsTableExists?: boolean;
+}
+
 export class FakePostgresExecutor implements PostgresQueryExecutor {
     readonly queries: RecordedPostgresQuery[] = [];
     readonly schemaMigrationRows: FakeAppliedMigrationRow[];
@@ -34,9 +38,15 @@ export class FakePostgresExecutor implements PostgresQueryExecutor {
     readonly snapshotRows = new Map<string, SnapshotRow[]>();
     readonly sideEffectRows = new Map<string, ActionSideEffectRow[]>();
     readonly conflictRows = new Map<string, ActionConflictRow[]>();
+    schemaMigrationsTableExists: boolean;
 
-    constructor(appliedMigrationRows: readonly FakeAppliedMigrationRow[] = []) {
+    constructor(
+        appliedMigrationRows: readonly FakeAppliedMigrationRow[] = [],
+        options: FakePostgresExecutorOptions = {},
+    ) {
         this.schemaMigrationRows = [...appliedMigrationRows];
+        this.schemaMigrationsTableExists =
+            options.schemaMigrationsTableExists ?? appliedMigrationRows.length > 0;
     }
 
     async query<TResult extends QueryResultRow = QueryResultRow>(
@@ -48,6 +58,22 @@ export class FakePostgresExecutor implements PostgresQueryExecutor {
         const trimmedText = text.trim();
 
         if (trimmedText === 'BEGIN' || trimmedText === 'COMMIT' || trimmedText === 'ROLLBACK') {
+            return createQueryResult([]);
+        }
+
+        if (text.includes("to_regclass('rollbackkit_schema_migrations')")) {
+            return createQueryResult([
+                {
+                    table_name: this.schemaMigrationsTableExists
+                        ? 'rollbackkit_schema_migrations'
+                        : null,
+                },
+            ] as unknown as TResult[]);
+        }
+
+        if (text.includes('CREATE TABLE IF NOT EXISTS rollbackkit_schema_migrations')) {
+            this.schemaMigrationsTableExists = true;
+
             return createQueryResult([]);
         }
 
@@ -74,6 +100,10 @@ export class FakePostgresExecutor implements PostgresQueryExecutor {
         if (text.includes('INSERT INTO rollbackkit_action_runs')) {
             if (values === undefined) {
                 throw new Error('Expected action run insert query values.');
+            }
+
+            if (text.includes('ON CONFLICT') && this.#findIdempotentActionRunFromInsert(values)) {
+                return createQueryResult([]);
             }
 
             const row = createActionRunRowFromInsertValues(values);
@@ -161,6 +191,15 @@ export class FakePostgresExecutor implements PostgresQueryExecutor {
 
         if (
             text.includes('FROM rollbackkit_action_runs') &&
+            text.includes('idempotency_key = $4')
+        ) {
+            const row = this.#findIdempotentActionRunFromLookup(text, values ?? []);
+
+            return createQueryResult((row === undefined ? [] : [row]) as unknown as TResult[]);
+        }
+
+        if (
+            text.includes('FROM rollbackkit_action_runs') &&
             text.includes('ORDER BY created_at DESC, id DESC')
         ) {
             const rows = applyActionHistoryQuery(
@@ -174,6 +213,55 @@ export class FakePostgresExecutor implements PostgresQueryExecutor {
 
         return createQueryResult([]);
     }
+
+    #findIdempotentActionRunFromInsert(values: readonly unknown[]): ActionRunRow | undefined {
+        return findIdempotentActionRun(Array.from(this.actionRunRows.values()), {
+            name: String(values[1]),
+            actorType: String(values[4]),
+            actorId: String(values[3]),
+            tenantId: values[6] as string | null,
+            idempotencyKey: values[12] as string | null,
+        });
+    }
+
+    #findIdempotentActionRunFromLookup(
+        text: string,
+        values: readonly unknown[],
+    ): ActionRunRow | undefined {
+        return findIdempotentActionRun(Array.from(this.actionRunRows.values()), {
+            name: String(values[0]),
+            actorType: String(values[1]),
+            actorId: String(values[2]),
+            tenantId: text.includes('tenant_id IS NULL') ? null : (values[4] as string | null),
+            idempotencyKey: values[3] as string | null,
+        });
+    }
+}
+
+interface IdempotentActionRunScope {
+    readonly name: string;
+    readonly actorType: string;
+    readonly actorId: string;
+    readonly tenantId: string | null;
+    readonly idempotencyKey: string | null;
+}
+
+function findIdempotentActionRun(
+    rows: readonly ActionRunRow[],
+    scope: IdempotentActionRunScope,
+): ActionRunRow | undefined {
+    if (scope.idempotencyKey === null) {
+        return undefined;
+    }
+
+    return rows.find(
+        (row) =>
+            row.name === scope.name &&
+            row.actor_type === scope.actorType &&
+            row.actor_id === scope.actorId &&
+            row.tenant_id === scope.tenantId &&
+            row.idempotency_key === scope.idempotencyKey,
+    );
 }
 
 function createActionRunRowFromInsertValues(values: readonly unknown[]): ActionRunRow {
@@ -194,11 +282,12 @@ function createActionRunRowFromInsertValues(values: readonly unknown[]): ActionR
 
         input: values[10] as JsonValue,
         input_hash: values[11] as string | null,
-        reversibility: values[12] as Reversibility,
+        idempotency_key: values[12] as string | null,
+        reversibility: values[13] as Reversibility,
 
-        created_at: values[13] as Date,
+        created_at: values[14] as Date,
         executed_at: null,
-        undo_expires_at: values[14] as Date | null,
+        undo_expires_at: values[15] as Date | null,
         undo_started_at: null,
         undone_at: null,
         undone_by: null,
@@ -206,7 +295,7 @@ function createActionRunRowFromInsertValues(values: readonly unknown[]): ActionR
         result: null,
         undo_result: null,
         error: null,
-        metadata: values[15] as JsonObject | null,
+        metadata: values[16] as JsonObject | null,
     };
 }
 

@@ -67,6 +67,7 @@ describe('PostgreSQL row mappers', () => {
                 projectId: 'project_1',
             },
             input_hash: 'hash_1',
+            idempotency_key: 'request_1',
             reversibility: REVERSIBILITY.full,
 
             created_at: '2026-01-01T00:00:00.000Z',
@@ -99,6 +100,7 @@ describe('PostgreSQL row mappers', () => {
                 projectId: 'project_1',
             },
             inputHash: 'hash_1',
+            idempotencyKey: 'request_1',
             reversibility: REVERSIBILITY.full,
             createdAt: new Date('2026-01-01T00:00:00.000Z'),
             executedAt: new Date('2026-01-01T00:00:01.000Z'),
@@ -136,6 +138,7 @@ describe('PostgreSQL row mappers', () => {
 
             input: {},
             input_hash: null,
+            idempotency_key: null,
             reversibility: REVERSIBILITY.full,
 
             created_at: new Date('2026-01-01T00:00:00.000Z'),
@@ -165,6 +168,7 @@ describe('PostgreSQL row mappers', () => {
 
         expect('tenantId' in run).toBe(false);
         expect('target' in run).toBe(false);
+        expect('idempotencyKey' in run).toBe(false);
         expect('result' in run).toBe(false);
         expect('undoResult' in run).toBe(false);
     });

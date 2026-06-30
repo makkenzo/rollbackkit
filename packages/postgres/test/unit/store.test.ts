@@ -95,7 +95,8 @@ describe('PostgresStore action runs', () => {
         expect(insertQuery.values[6]).toBe('tenant_1');
         expect(insertQuery.values[7]).toBe('project');
         expect(insertQuery.values[8]).toBe('project_1');
-        expect(insertQuery.values[14]).toEqual(undoExpiresAt);
+        expect(insertQuery.values[12]).toBeNull();
+        expect(insertQuery.values[15]).toEqual(undoExpiresAt);
     });
 
     it('reads action runs by id', async () => {
@@ -119,6 +120,58 @@ describe('PostgresStore action runs', () => {
         });
 
         await expect(store.getActionRun(created.id)).resolves.toEqual(created);
+    });
+
+    it('claims idempotent action runs without creating duplicates', async () => {
+        const now = new Date('2026-01-01T00:00:00.000Z');
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+            clock: {
+                now: () => now,
+            },
+        });
+
+        const first = await store.claimActionRun({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            target,
+            input: {
+                projectId: 'project_1',
+            },
+            inputHash: 'fnv1a64:hash_1',
+            idempotencyKey: 'request_1',
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const second = await store.claimActionRun({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            target,
+            input: {
+                projectId: 'project_1',
+            },
+            inputHash: 'fnv1a64:hash_1',
+            idempotencyKey: 'request_1',
+            reversibility: REVERSIBILITY.full,
+        });
+
+        expect(first.created).toBe(true);
+        expect(second.created).toBe(false);
+        expect(second.run).toEqual(first.run);
+        expect(first.run.idempotencyKey).toBe('request_1');
+        expect(first.run.inputHash).toBe('fnv1a64:hash_1');
+        expect(executor.actionRunRows.size).toBe(1);
+
+        const insertQuery = executor.queries.find((query) =>
+            query.text.includes('INSERT INTO rollbackkit_action_runs'),
+        );
+
+        expect(insertQuery?.text).toContain('ON CONFLICT');
+        expect(insertQuery?.text).toContain('idempotency_key');
     });
 
     it('updates action runs', async () => {

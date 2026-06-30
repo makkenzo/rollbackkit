@@ -31,6 +31,7 @@ export interface ActionRunRow extends QueryResultRow {
 
     readonly input: JsonValue;
     readonly input_hash: string | null;
+    readonly idempotency_key: string | null;
     readonly reversibility: Reversibility;
 
     readonly created_at: Date | string;
@@ -91,6 +92,7 @@ export function mapActionRunRow(row: ActionRunRow): ActionRun {
         ...(row.tenant_id === null ? {} : { tenantId: row.tenant_id }),
         ...(row.target === null ? {} : { target: row.target }),
         ...(row.input_hash === null ? {} : { inputHash: row.input_hash }),
+        ...(row.idempotency_key === null ? {} : { idempotencyKey: row.idempotency_key }),
         ...(executedAt === undefined ? {} : { executedAt }),
         ...(undoExpiresAt === undefined ? {} : { undoExpiresAt }),
         ...(undoStartedAt === undefined ? {} : { undoStartedAt }),

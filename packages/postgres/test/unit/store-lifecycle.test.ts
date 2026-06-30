@@ -91,6 +91,7 @@ describe('PostgresStore core lifecycle integration', () => {
             input: {
                 projectId: 'project_1',
             },
+            inputHash: expect.stringMatching(/^fnv1a64:/),
             reversibility: REVERSIBILITY.full,
             createdAt: now,
             executedAt: now,

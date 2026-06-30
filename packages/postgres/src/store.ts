@@ -3,6 +3,8 @@ import {
     type ActionHistoryQuery,
     type ActionRun,
     type ActionSideEffect,
+    type ClaimActionRunInput,
+    type ClaimActionRunResult,
     type Clock,
     type CreateActionRunInput,
     type CreateSnapshotInput,
@@ -16,6 +18,7 @@ import {
     type UpdateActionRunInput,
 } from '@rollbackkit/core';
 
+import { createActionRunUpdateQuery } from './action-run-update-query';
 import { createRollbackKitPostgresId } from './id';
 import {
     type ActionConflictRow,
@@ -28,60 +31,12 @@ import {
     type SnapshotRow,
 } from './mappers';
 import type { PostgresQueryExecutor } from './migration-runner';
-
-const ACTION_RUN_COLUMNS_SQL = `
-id,
-name,
-status,
-actor_id,
-actor_type,
-actor,
-tenant_id,
-target_type,
-target_id,
-target,
-input,
-input_hash,
-reversibility,
-created_at,
-executed_at,
-undo_expires_at,
-undo_started_at,
-undone_at,
-undone_by,
-result,
-undo_result,
-error,
-metadata
-`;
-
-const SNAPSHOT_COLUMNS_SQL = `
-id,
-action_run_id,
-key,
-value,
-created_at,
-metadata
-`;
-
-const SIDE_EFFECT_COLUMNS_SQL = `
-id,
-action_run_id,
-type,
-status,
-reversibility,
-payload,
-created_at,
-metadata
-`;
-
-const CONFLICT_COLUMNS_SQL = `
-id,
-action_run_id,
-reason,
-details,
-created_at
-`;
+import {
+    ACTION_RUN_COLUMNS_SQL,
+    CONFLICT_COLUMNS_SQL,
+    SIDE_EFFECT_COLUMNS_SQL,
+    SNAPSHOT_COLUMNS_SQL,
+} from './sql-columns';
 
 export interface PostgresStoreOptions {
     /**
@@ -109,6 +64,60 @@ export class PostgresStore implements StorageAdapter {
     async createActionRun<TInput extends JsonValue = JsonValue>(
         input: CreateActionRunInput<TInput>,
     ): Promise<ActionRun<TInput>> {
+        const row = await this.#insertActionRun(input);
+
+        if (row === undefined) {
+            throw new RollbackKitError({
+                code: 'STORAGE_ERROR',
+                message: 'PostgreSQL did not return an action run after insert.',
+                details: {
+                    operation: 'createActionRun',
+                },
+            });
+        }
+
+        return mapActionRunRow(row) as ActionRun<TInput>;
+    }
+
+    async claimActionRun<TInput extends JsonValue = JsonValue>(
+        input: ClaimActionRunInput<TInput>,
+    ): Promise<ClaimActionRunResult<TInput>> {
+        const row = await this.#insertActionRun(input, createIdempotencyConflictSql(input));
+
+        if (row !== undefined) {
+            return {
+                run: mapActionRunRow(row) as ActionRun<TInput>,
+                created: true,
+            };
+        }
+
+        const existingRun = await this.#getActionRunByIdempotencyKey(input);
+
+        if (existingRun === null) {
+            throw new RollbackKitError({
+                code: 'STORAGE_ERROR',
+                message: 'PostgreSQL did not return an idempotent action run after conflict.',
+                details: {
+                    operation: 'claimActionRun',
+                    actionName: input.name,
+                    actorId: input.actor.id,
+                    actorType: input.actor.type,
+                    idempotencyKey: input.idempotencyKey,
+                    ...(input.tenantId === undefined ? {} : { tenantId: input.tenantId }),
+                },
+            });
+        }
+
+        return {
+            run: existingRun as ActionRun<TInput>,
+            created: false,
+        };
+    }
+
+    async #insertActionRun<TInput extends JsonValue = JsonValue>(
+        input: CreateActionRunInput<TInput>,
+        conflictSql = '',
+    ): Promise<ActionRunRow | undefined> {
         const id = createRollbackKitPostgresId('run');
         const createdAt = this.#clock.now();
 
@@ -127,6 +136,7 @@ INSERT INTO rollbackkit_action_runs (
     target,
     input,
     input_hash,
+    idempotency_key,
     reversibility,
     created_at,
     undo_expires_at,
@@ -145,11 +155,13 @@ VALUES (
     $10::jsonb,
     $11::jsonb,
     $12,
-    $13::jsonb,
-    $14,
+    $13,
+    $14::jsonb,
     $15,
-    $16::jsonb
+    $16,
+    $17::jsonb
 )
+${conflictSql}
 RETURNING ${ACTION_RUN_COLUMNS_SQL}
 `,
             [
@@ -165,6 +177,7 @@ RETURNING ${ACTION_RUN_COLUMNS_SQL}
                 input.target === undefined ? null : input.target,
                 input.input,
                 input.inputHash === undefined ? null : input.inputHash,
+                input.idempotencyKey === undefined ? null : input.idempotencyKey,
                 input.reversibility,
                 createdAt,
                 input.undoExpiresAt === undefined ? null : input.undoExpiresAt,
@@ -172,19 +185,7 @@ RETURNING ${ACTION_RUN_COLUMNS_SQL}
             ],
         );
 
-        const row = result.rows[0];
-
-        if (row === undefined) {
-            throw new RollbackKitError({
-                code: 'STORAGE_ERROR',
-                message: 'PostgreSQL did not return an action run after insert.',
-                details: {
-                    operation: 'createActionRun',
-                },
-            });
-        }
-
-        return mapActionRunRow(row) as ActionRun<TInput>;
+        return result.rows[0];
     }
 
     async getActionRun(id: string): Promise<ActionRun | null> {
@@ -195,6 +196,39 @@ FROM rollbackkit_action_runs
 WHERE id = $1
 `,
             [id],
+        );
+
+        const row = result.rows[0];
+
+        return row === undefined ? null : mapActionRunRow(row);
+    }
+
+    async #getActionRunByIdempotencyKey(input: ClaimActionRunInput): Promise<ActionRun | null> {
+        const values: unknown[] = [
+            input.name,
+            input.actor.type,
+            input.actor.id,
+            input.idempotencyKey,
+        ];
+
+        let tenantSql = 'tenant_id IS NULL';
+
+        if (input.tenantId !== undefined) {
+            values.push(input.tenantId);
+            tenantSql = `tenant_id = $${values.length}`;
+        }
+
+        const result = await this.#executor.query<ActionRunRow>(
+            `
+SELECT ${ACTION_RUN_COLUMNS_SQL}
+FROM rollbackkit_action_runs
+WHERE name = $1
+    AND actor_type = $2
+    AND actor_id = $3
+    AND idempotency_key = $4
+    AND ${tenantSql}
+`,
+            values,
         );
 
         const row = result.rows[0];
@@ -518,74 +552,6 @@ export function createPostgresStore(options: PostgresStoreOptions): PostgresStor
     return new PostgresStore(options);
 }
 
-interface BuiltActionRunUpdateQuery {
-    readonly text: string;
-    readonly values: unknown[];
-}
-
-function createActionRunUpdateQuery<TResult extends JsonValue>(
-    id: string,
-    input: UpdateActionRunInput<TResult>,
-): BuiltActionRunUpdateQuery | null {
-    const values: unknown[] = [id];
-    const assignments: string[] = [];
-
-    const pushAssignment = (column: string, value: unknown, cast = '') => {
-        values.push(value);
-        assignments.push(`${column} = $${values.length}${cast}`);
-    };
-
-    if (input.status !== undefined) {
-        pushAssignment('status', input.status);
-    }
-
-    if (input.executedAt !== undefined) {
-        pushAssignment('executed_at', input.executedAt);
-    }
-
-    if (input.undoStartedAt !== undefined) {
-        pushAssignment('undo_started_at', input.undoStartedAt);
-    }
-
-    if (input.undoneAt !== undefined) {
-        pushAssignment('undone_at', input.undoneAt);
-    }
-
-    if (input.undoneBy !== undefined) {
-        pushAssignment('undone_by', input.undoneBy, '::jsonb');
-    }
-
-    if (input.result !== undefined) {
-        pushAssignment('result', input.result, '::jsonb');
-    }
-
-    if (input.undoResult !== undefined) {
-        pushAssignment('undo_result', input.undoResult, '::jsonb');
-    }
-
-    if (input.error !== undefined) {
-        pushAssignment('error', input.error, '::jsonb');
-    }
-
-    if (input.metadata !== undefined) {
-        pushAssignment('metadata', input.metadata, '::jsonb');
-    }
-
-    if (assignments.length === 0) {
-        return null;
-    }
-
-    return {
-        text: `
-UPDATE rollbackkit_action_runs
-SET ${assignments.join(',\n    ')}
-WHERE id = $1
-RETURNING ${ACTION_RUN_COLUMNS_SQL}
-`,
-        values,
-    };
-}
-
 function createActionRunNotFoundError(actionRunId: string): RollbackKitError {
     return new RollbackKitError({
         code: 'ACTION_NOT_FOUND',
@@ -594,6 +560,22 @@ function createActionRunNotFoundError(actionRunId: string): RollbackKitError {
             actionRunId,
         },
     });
+}
+
+function createIdempotencyConflictSql(input: ClaimActionRunInput): string {
+    if (input.tenantId === undefined) {
+        return `
+ON CONFLICT (name, actor_type, actor_id, idempotency_key)
+WHERE idempotency_key IS NOT NULL AND tenant_id IS NULL
+DO NOTHING
+`;
+    }
+
+    return `
+ON CONFLICT (tenant_id, name, actor_type, actor_id, idempotency_key)
+WHERE idempotency_key IS NOT NULL AND tenant_id IS NOT NULL
+DO NOTHING
+`;
 }
 
 function actionRunMatchesHistoryQuery(run: ActionRun, query: ActionHistoryQuery): boolean {

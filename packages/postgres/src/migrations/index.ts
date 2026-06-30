@@ -1,7 +1,11 @@
 import { initialSchemaMigration } from './0001-initial-schema';
+import { actionRunIdempotencyMigration } from './0002-action-run-idempotency';
 
 export type { RollbackKitPostgresMigration } from './types';
 
-export { initialSchemaMigration };
+export { actionRunIdempotencyMigration, initialSchemaMigration };
 
-export const ROLLBACKKIT_POSTGRES_MIGRATIONS = [initialSchemaMigration] as const;
+export const ROLLBACKKIT_POSTGRES_MIGRATIONS = [
+    initialSchemaMigration,
+    actionRunIdempotencyMigration,
+] as const;

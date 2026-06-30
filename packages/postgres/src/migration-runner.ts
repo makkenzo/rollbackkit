@@ -15,6 +15,10 @@ interface AppliedMigrationRow extends QueryResultRow {
     readonly applied_at: Date | string;
 }
 
+interface SchemaMigrationTableRow extends QueryResultRow {
+    readonly table_name: string | null;
+}
+
 export interface PostgresQueryExecutor {
     query<TResult extends QueryResultRow = QueryResultRow>(
         text: string,
@@ -30,6 +34,13 @@ export interface AppliedPostgresMigration {
 export interface PostgresMigrationResult {
     readonly applied: readonly RollbackKitPostgresMigration[];
     readonly skipped: readonly RollbackKitPostgresMigration[];
+}
+
+export interface PostgresMigrationStatus {
+    readonly schemaTableExists: boolean;
+    readonly applied: readonly AppliedPostgresMigration[];
+    readonly skipped: readonly RollbackKitPostgresMigration[];
+    readonly pending: readonly RollbackKitPostgresMigration[];
 }
 
 export interface PostgresMigrationRunnerOptions {
@@ -80,19 +91,25 @@ export class PostgresMigrationRunner {
         return this.#readAppliedMigrations();
     }
 
+    async getMigrationStatus(): Promise<PostgresMigrationStatus> {
+        const schemaTableExists = await this.#readSchemaMigrationsTableExists();
+
+        if (!schemaTableExists) {
+            return this.#createMigrationStatus([], false);
+        }
+
+        return this.#createMigrationStatus(await this.#readAppliedMigrations(), true);
+    }
+
     async migrate(): Promise<PostgresMigrationResult> {
         await this.#ensureSchemaMigrationsTable();
 
-        const appliedMigrations = await this.#readAppliedMigrations();
-        const appliedIds = new Set(appliedMigrations.map((migration) => migration.id));
+        const status = this.#createMigrationStatus(await this.#readAppliedMigrations(), true);
 
-        const skipped = this.#migrations.filter((migration) => appliedIds.has(migration.id));
-        const pending = this.#migrations.filter((migration) => !appliedIds.has(migration.id));
-
-        if (pending.length === 0) {
+        if (status.pending.length === 0) {
             return {
                 applied: [],
-                skipped,
+                skipped: status.skipped,
             };
         }
 
@@ -105,7 +122,21 @@ export class PostgresMigrationRunner {
                 'LOCK TABLE rollbackkit_schema_migrations IN SHARE ROW EXCLUSIVE MODE',
             );
 
-            for (const migration of pending) {
+            const lockedStatus = this.#createMigrationStatus(
+                await this.#readAppliedMigrations(),
+                true,
+            );
+
+            if (lockedStatus.pending.length === 0) {
+                await this.#executor.query('COMMIT');
+
+                return {
+                    applied: [],
+                    skipped: lockedStatus.skipped,
+                };
+            }
+
+            for (const migration of lockedStatus.pending) {
                 currentMigration = migration;
 
                 await this.#executor.query(migration.sql);
@@ -113,7 +144,6 @@ export class PostgresMigrationRunner {
                     `
 INSERT INTO rollbackkit_schema_migrations (id, description)
 VALUES ($1, $2)
-ON CONFLICT (id) DO NOTHING
 `,
                     [migration.id, migration.description],
                 );
@@ -122,8 +152,8 @@ ON CONFLICT (id) DO NOTHING
             await this.#executor.query('COMMIT');
 
             return {
-                applied: pending,
-                skipped,
+                applied: lockedStatus.pending,
+                skipped: lockedStatus.skipped,
             };
         } catch (error) {
             await this.#executor.query('ROLLBACK').catch(() => undefined);
@@ -150,6 +180,14 @@ ON CONFLICT (id) DO NOTHING
         await this.#executor.query(SCHEMA_MIGRATIONS_TABLE_SQL);
     }
 
+    async #readSchemaMigrationsTableExists(): Promise<boolean> {
+        const result = await this.#executor.query<SchemaMigrationTableRow>(`
+SELECT to_regclass('rollbackkit_schema_migrations')::text AS table_name
+`);
+
+        return result.rows[0]?.table_name !== null && result.rows[0]?.table_name !== undefined;
+    }
+
     async #readAppliedMigrations(): Promise<readonly AppliedPostgresMigration[]> {
         const result = await this.#executor.query<AppliedMigrationRow>(`
 SELECT id, applied_at
@@ -161,6 +199,20 @@ ORDER BY id ASC
             id: row.id,
             appliedAt: row.applied_at instanceof Date ? row.applied_at : new Date(row.applied_at),
         }));
+    }
+
+    #createMigrationStatus(
+        appliedMigrations: readonly AppliedPostgresMigration[],
+        schemaTableExists: boolean,
+    ): PostgresMigrationStatus {
+        const appliedIds = new Set(appliedMigrations.map((migration) => migration.id));
+
+        return {
+            schemaTableExists,
+            applied: appliedMigrations,
+            skipped: this.#migrations.filter((migration) => appliedIds.has(migration.id)),
+            pending: this.#migrations.filter((migration) => !appliedIds.has(migration.id)),
+        };
     }
 }
 

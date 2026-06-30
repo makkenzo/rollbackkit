@@ -18,6 +18,7 @@ export type {
     AppliedPostgresMigration,
     PostgresMigrationResult,
     PostgresMigrationRunnerOptions,
+    PostgresMigrationStatus,
     PostgresQueryExecutor,
     RollbackKitPostgresMigrationErrorOptions,
 } from './migration-runner';
@@ -27,6 +28,10 @@ export {
     RollbackKitPostgresMigrationError,
 } from './migration-runner';
 export type { RollbackKitPostgresMigration } from './migrations';
-export { initialSchemaMigration, ROLLBACKKIT_POSTGRES_MIGRATIONS } from './migrations';
+export {
+    actionRunIdempotencyMigration,
+    initialSchemaMigration,
+    ROLLBACKKIT_POSTGRES_MIGRATIONS,
+} from './migrations';
 export type { PostgresStoreOptions } from './store';
 export { createPostgresStore, PostgresStore } from './store';
