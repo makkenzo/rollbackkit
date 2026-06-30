@@ -1,5 +1,6 @@
 import {
     type ActionConflict,
+    type ActionHistoryQuery,
     type ActionRun,
     type ActionSideEffect,
     type Clock,
@@ -390,6 +391,82 @@ RETURNING ${CONFLICT_COLUMNS_SQL}
 
         return mapActionConflictRow(row);
     }
+
+    async queryActionRuns(query: ActionHistoryQuery): Promise<readonly ActionRun[]> {
+        if (query.limit !== undefined && query.limit <= 0) {
+            return [];
+        }
+
+        const conditions: string[] = [];
+        const values: unknown[] = [];
+
+        const addCondition = (condition: string, value: unknown) => {
+            values.push(value);
+            conditions.push(`${condition} $${values.length}`);
+        };
+
+        if (query.tenantId !== undefined) {
+            addCondition('tenant_id =', query.tenantId);
+        }
+
+        if (query.actorId !== undefined) {
+            addCondition('actor_id =', query.actorId);
+        }
+
+        if (query.targetType !== undefined) {
+            addCondition('target_type =', query.targetType);
+        }
+
+        if (query.targetId !== undefined) {
+            addCondition('target_id =', query.targetId);
+        }
+
+        if (query.name !== undefined) {
+            addCondition('name =', query.name);
+        }
+
+        if (query.status !== undefined) {
+            addCondition('status =', query.status);
+        }
+
+        if (query.cursor !== undefined) {
+            const cursorRun = await this.getActionRun(query.cursor);
+
+            if (cursorRun !== null && actionRunMatchesHistoryQuery(cursorRun, query)) {
+                values.push(cursorRun.createdAt);
+                const cursorCreatedAtParameter = values.length;
+
+                values.push(cursorRun.id);
+                const cursorIdParameter = values.length;
+
+                conditions.push(
+                    `(created_at < $${cursorCreatedAtParameter} OR (created_at = $${cursorCreatedAtParameter} AND id < $${cursorIdParameter}))`,
+                );
+            }
+        }
+
+        const whereSql = conditions.length === 0 ? '' : `WHERE ${conditions.join('\n    AND ')}`;
+
+        let limitSql = '';
+
+        if (query.limit !== undefined) {
+            values.push(query.limit);
+            limitSql = `LIMIT $${values.length}`;
+        }
+
+        const result = await this.#executor.query<ActionRunRow>(
+            `
+SELECT ${ACTION_RUN_COLUMNS_SQL}
+FROM rollbackkit_action_runs
+${whereSql}
+ORDER BY created_at DESC, id DESC
+${limitSql}
+`,
+            values,
+        );
+
+        return result.rows.map(mapActionRunRow);
+    }
 }
 
 export function createPostgresStore(options: PostgresStoreOptions): PostgresStore {
@@ -472,4 +549,32 @@ function createActionRunNotFoundError(actionRunId: string): RollbackKitError {
             actionRunId,
         },
     });
+}
+
+function actionRunMatchesHistoryQuery(run: ActionRun, query: ActionHistoryQuery): boolean {
+    if (query.tenantId !== undefined && run.tenantId !== query.tenantId) {
+        return false;
+    }
+
+    if (query.actorId !== undefined && run.actor.id !== query.actorId) {
+        return false;
+    }
+
+    if (query.targetType !== undefined && run.target?.type !== query.targetType) {
+        return false;
+    }
+
+    if (query.targetId !== undefined && run.target?.id !== query.targetId) {
+        return false;
+    }
+
+    if (query.name !== undefined && run.name !== query.name) {
+        return false;
+    }
+
+    if (query.status !== undefined && run.status !== query.status) {
+        return false;
+    }
+
+    return true;
 }

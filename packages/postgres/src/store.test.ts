@@ -122,6 +122,26 @@ class FakePostgresExecutor implements PostgresQueryExecutor {
             return createQueryResult((row === undefined ? [] : [row]) as unknown as TResult[]);
         }
 
+        if (
+            text.includes('FROM rollbackkit_action_runs') &&
+            text.includes('ORDER BY created_at DESC, id DESC')
+        ) {
+            const rows = applyActionHistoryQuery(
+                Array.from(this.actionRunRows.values()),
+                text,
+                values ?? [],
+            );
+
+            return createQueryResult(rows as unknown as TResult[]);
+        }
+
+        if (text.includes('FROM rollbackkit_action_runs') && text.includes('WHERE id = $1')) {
+            const id = String(values?.[0]);
+            const row = this.actionRunRows.get(id);
+
+            return createQueryResult((row === undefined ? [] : [row]) as unknown as TResult[]);
+        }
+
         return createQueryResult([]);
     }
 }
@@ -672,6 +692,282 @@ describe('PostgresStore action runs', () => {
         });
     });
 
+    it('queries action runs with filters', async () => {
+        let now = new Date('2026-01-01T00:00:00.000Z');
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+            clock: {
+                now: () => now,
+            },
+        });
+
+        const first = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            target: {
+                id: 'project_1',
+                type: 'project',
+            },
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        now = new Date('2026-01-01T00:00:01.000Z');
+
+        const second = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            target: {
+                id: 'project_2',
+                type: 'project',
+            },
+            input: {
+                projectId: 'project_2',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        now = new Date('2026-01-01T00:00:02.000Z');
+
+        await store.createActionRun({
+            name: 'member.remove',
+            actor: {
+                id: 'user_2',
+                type: 'user',
+            },
+            tenantId: 'tenant_2',
+            target: {
+                id: 'member_1',
+                type: 'member',
+            },
+            input: {
+                memberId: 'member_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        await expect(
+            store.queryActionRuns({
+                tenantId: 'tenant_1',
+                name: 'project.archive',
+            }),
+        ).resolves.toEqual([second, first]);
+
+        const historyQuery = executor.queries.find(
+            (query) =>
+                query.text.includes('FROM rollbackkit_action_runs') &&
+                query.text.includes('ORDER BY created_at DESC, id DESC') &&
+                query.text.includes('tenant_id ='),
+        );
+
+        expect(historyQuery?.text).toContain('tenant_id = $1');
+        expect(historyQuery?.text).toContain('name = $2');
+        expect(historyQuery?.values).toEqual(['tenant_1', 'project.archive']);
+    });
+
+    it('queries action runs by actor, target and status', async () => {
+        let now = new Date('2026-01-01T00:00:00.000Z');
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+            clock: {
+                now: () => now,
+            },
+        });
+
+        const first = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            target,
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const completed = await store.updateActionRun(first.id, {
+            status: 'completed',
+        });
+
+        now = new Date('2026-01-01T00:00:01.000Z');
+
+        await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            target: {
+                id: 'project_2',
+                type: 'project',
+            },
+            input: {
+                projectId: 'project_2',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        await expect(
+            store.queryActionRuns({
+                actorId: actor.id,
+                targetType: target.type,
+                targetId: target.id,
+                status: 'completed',
+            }),
+        ).resolves.toEqual([completed]);
+    });
+
+    it('queries action runs with cursor and limit', async () => {
+        let now = new Date('2026-01-01T00:00:00.000Z');
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+            clock: {
+                now: () => now,
+            },
+        });
+
+        const first = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        now = new Date('2026-01-01T00:00:01.000Z');
+
+        const second = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            input: {
+                projectId: 'project_2',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        now = new Date('2026-01-01T00:00:02.000Z');
+
+        const third = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            input: {
+                projectId: 'project_3',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        await expect(
+            store.queryActionRuns({
+                tenantId: 'tenant_1',
+                limit: 2,
+            }),
+        ).resolves.toEqual([third, second]);
+
+        await expect(
+            store.queryActionRuns({
+                tenantId: 'tenant_1',
+                cursor: third.id,
+                limit: 1,
+            }),
+        ).resolves.toEqual([second]);
+
+        await expect(
+            store.queryActionRuns({
+                tenantId: 'tenant_1',
+                cursor: second.id,
+            }),
+        ).resolves.toEqual([first]);
+    });
+
+    it('ignores missing or non-matching cursors', async () => {
+        let now = new Date('2026-01-01T00:00:00.000Z');
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+            clock: {
+                now: () => now,
+            },
+        });
+
+        const first = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        now = new Date('2026-01-01T00:00:01.000Z');
+
+        const second = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            input: {
+                projectId: 'project_2',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const otherTenantCursor = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_2',
+            input: {
+                projectId: 'project_3',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        await expect(
+            store.queryActionRuns({
+                tenantId: 'tenant_1',
+                cursor: 'missing_run',
+            }),
+        ).resolves.toEqual([second, first]);
+
+        await expect(
+            store.queryActionRuns({
+                tenantId: 'tenant_1',
+                cursor: otherTenantCursor.id,
+            }),
+        ).resolves.toEqual([second, first]);
+    });
+
+    it('returns an empty action history when limit is zero', async () => {
+        const executor = new FakePostgresExecutor();
+        const store = createPostgresStore({ executor });
+
+        await expect(
+            store.queryActionRuns({
+                limit: 0,
+            }),
+        ).resolves.toEqual([]);
+
+        const historyQuery = executor.queries.find(
+            (query) =>
+                query.text.includes('FROM rollbackkit_action_runs') &&
+                query.text.includes('ORDER BY created_at DESC, id DESC'),
+        );
+
+        expect(historyQuery).toBeUndefined();
+    });
+
     it('returns null when action run does not exist', async () => {
         const executor = new FakePostgresExecutor();
         const store = createPostgresStore({ executor });
@@ -799,6 +1095,113 @@ function readUpdatedValue(
     const valueIndex = Number(match[1]) - 1;
 
     return values[valueIndex];
+}
+
+function applyActionHistoryQuery(
+    rows: readonly ActionRunRow[],
+    text: string,
+    values: readonly unknown[],
+): ActionRunRow[] {
+    let result = [...rows];
+
+    result = filterBySqlColumn(result, text, values, 'tenant_id');
+    result = filterBySqlColumn(result, text, values, 'actor_id');
+    result = filterBySqlColumn(result, text, values, 'target_type');
+    result = filterBySqlColumn(result, text, values, 'target_id');
+    result = filterBySqlColumn(result, text, values, 'name');
+    result = filterBySqlColumn(result, text, values, 'status');
+
+    result = applyCursorFilter(result, text, values);
+
+    result.sort((first, second) => {
+        const firstCreatedAt = toTime(first.created_at);
+        const secondCreatedAt = toTime(second.created_at);
+        const byCreatedAt = secondCreatedAt - firstCreatedAt;
+
+        if (byCreatedAt !== 0) {
+            return byCreatedAt;
+        }
+
+        return second.id.localeCompare(first.id);
+    });
+
+    const limit = readLimit(text, values);
+
+    return limit === undefined ? result : result.slice(0, limit);
+}
+
+function filterBySqlColumn(
+    rows: ActionRunRow[],
+    text: string,
+    values: readonly unknown[],
+    column: keyof ActionRunRow,
+): ActionRunRow[] {
+    const value = readSqlEqualsValue(text, values, String(column));
+
+    if (value === undefined) {
+        return rows;
+    }
+
+    return rows.filter((row) => row[column] === value);
+}
+
+function applyCursorFilter(
+    rows: ActionRunRow[],
+    text: string,
+    values: readonly unknown[],
+): ActionRunRow[] {
+    const cursorCreatedAt = readSqlLessThanValue(text, values, 'created_at');
+    const cursorId = readSqlLessThanValue(text, values, 'id');
+
+    if (cursorCreatedAt === undefined || cursorId === undefined) {
+        return rows;
+    }
+
+    const cursorCreatedAtTime = toTime(cursorCreatedAt as Date | string);
+    const cursorIdValue = String(cursorId);
+
+    return rows.filter((row) => {
+        const createdAtTime = toTime(row.created_at);
+
+        return (
+            createdAtTime < cursorCreatedAtTime ||
+            (createdAtTime === cursorCreatedAtTime && row.id < cursorIdValue)
+        );
+    });
+}
+
+function readSqlEqualsValue(text: string, values: readonly unknown[], column: string): unknown {
+    const match = new RegExp(`\\b${column}\\s*=\\s*\\$(\\d+)`).exec(text);
+
+    if (match?.[1] === undefined) {
+        return undefined;
+    }
+
+    return values[Number(match[1]) - 1];
+}
+
+function readSqlLessThanValue(text: string, values: readonly unknown[], column: string): unknown {
+    const match = new RegExp(`\\b${column}\\s*<\\s*\\$(\\d+)`).exec(text);
+
+    if (match?.[1] === undefined) {
+        return undefined;
+    }
+
+    return values[Number(match[1]) - 1];
+}
+
+function readLimit(text: string, values: readonly unknown[]): number | undefined {
+    const match = /\bLIMIT\s+\$(\d+)/.exec(text);
+
+    if (match?.[1] === undefined) {
+        return undefined;
+    }
+
+    return Number(values[Number(match[1]) - 1]);
+}
+
+function toTime(value: Date | string): number {
+    return value instanceof Date ? value.getTime() : new Date(value).getTime();
 }
 
 function createQueryResult<TResult extends QueryResultRow>(rows: TResult[]): QueryResult<TResult> {
