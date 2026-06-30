@@ -1,0 +1,413 @@
+import type {
+    ActionActor,
+    ActionRunStatus,
+    ActionTarget,
+    JsonObject,
+    JsonValue,
+    Reversibility,
+    SerializedRollbackKitError,
+    SideEffectStatus,
+} from '@rollbackkit/core';
+import type { QueryResult, QueryResultRow } from 'pg';
+import type {
+    ActionConflictRow,
+    ActionRunRow,
+    ActionSideEffectRow,
+    SnapshotRow,
+} from '../../src/mappers';
+import type { PostgresQueryExecutor } from '../../src/migration-runner';
+
+export interface RecordedPostgresQuery {
+    readonly text: string;
+    readonly values?: unknown[];
+}
+
+export interface FakeAppliedMigrationRow extends QueryResultRow {
+    readonly id: string;
+    readonly applied_at: Date | string;
+}
+
+export class FakePostgresExecutor implements PostgresQueryExecutor {
+    readonly queries: RecordedPostgresQuery[] = [];
+    readonly schemaMigrationRows: FakeAppliedMigrationRow[];
+    readonly actionRunRows = new Map<string, ActionRunRow>();
+    readonly snapshotRows = new Map<string, SnapshotRow[]>();
+    readonly sideEffectRows = new Map<string, ActionSideEffectRow[]>();
+    readonly conflictRows = new Map<string, ActionConflictRow[]>();
+
+    constructor(appliedMigrationRows: readonly FakeAppliedMigrationRow[] = []) {
+        this.schemaMigrationRows = [...appliedMigrationRows];
+    }
+
+    async query<TResult extends QueryResultRow = QueryResultRow>(
+        text: string,
+        values?: unknown[],
+    ): Promise<QueryResult<TResult>> {
+        this.queries.push(values === undefined ? { text } : { text, values });
+
+        const trimmedText = text.trim();
+
+        if (trimmedText === 'BEGIN' || trimmedText === 'COMMIT' || trimmedText === 'ROLLBACK') {
+            return createQueryResult([]);
+        }
+
+        if (
+            text.includes('SELECT id, applied_at') &&
+            text.includes('rollbackkit_schema_migrations')
+        ) {
+            return createQueryResult(this.schemaMigrationRows as unknown as TResult[]);
+        }
+
+        if (text.includes('INSERT INTO rollbackkit_schema_migrations') && values !== undefined) {
+            const id = String(values[0]);
+
+            if (!this.schemaMigrationRows.some((row) => row.id === id)) {
+                this.schemaMigrationRows.push({
+                    id,
+                    applied_at: new Date('2026-01-01T00:00:00.000Z'),
+                });
+            }
+
+            return createQueryResult([]);
+        }
+
+        if (text.includes('INSERT INTO rollbackkit_action_runs')) {
+            if (values === undefined) {
+                throw new Error('Expected action run insert query values.');
+            }
+
+            const row = createActionRunRowFromInsertValues(values);
+            this.actionRunRows.set(row.id, row);
+
+            return createQueryResult([row] as unknown as TResult[]);
+        }
+
+        if (text.includes('UPDATE rollbackkit_action_runs')) {
+            if (values === undefined) {
+                throw new Error('Expected action run update query values.');
+            }
+
+            const id = String(values[0]);
+            const existing = this.actionRunRows.get(id);
+
+            if (existing === undefined) {
+                return createQueryResult([]);
+            }
+
+            const updated = applyActionRunUpdateQuery(existing, text, values);
+            this.actionRunRows.set(id, updated);
+
+            return createQueryResult([updated] as unknown as TResult[]);
+        }
+
+        if (text.includes('INSERT INTO rollbackkit_snapshots')) {
+            if (values === undefined) {
+                throw new Error('Expected snapshot insert query values.');
+            }
+
+            const row = createSnapshotRowFromInsertValues(values);
+            const snapshots = this.snapshotRows.get(row.action_run_id) ?? [];
+
+            snapshots.push(row);
+            this.snapshotRows.set(row.action_run_id, snapshots);
+
+            return createQueryResult([row] as unknown as TResult[]);
+        }
+
+        if (
+            text.includes('FROM rollbackkit_snapshots') &&
+            text.includes('WHERE action_run_id = $1')
+        ) {
+            const actionRunId = String(values?.[0]);
+            const rows = this.snapshotRows.get(actionRunId) ?? [];
+
+            return createQueryResult([...rows] as unknown as TResult[]);
+        }
+
+        if (text.includes('INSERT INTO rollbackkit_side_effects')) {
+            if (values === undefined) {
+                throw new Error('Expected side effect insert query values.');
+            }
+
+            const row = createActionSideEffectRowFromInsertValues(values);
+            const sideEffects = this.sideEffectRows.get(row.action_run_id) ?? [];
+
+            sideEffects.push(row);
+            this.sideEffectRows.set(row.action_run_id, sideEffects);
+
+            return createQueryResult([row] as unknown as TResult[]);
+        }
+
+        if (text.includes('INSERT INTO rollbackkit_conflicts')) {
+            if (values === undefined) {
+                throw new Error('Expected conflict insert query values.');
+            }
+
+            const row = createActionConflictRowFromInsertValues(values);
+            const conflicts = this.conflictRows.get(row.action_run_id) ?? [];
+
+            conflicts.push(row);
+            this.conflictRows.set(row.action_run_id, conflicts);
+
+            return createQueryResult([row] as unknown as TResult[]);
+        }
+
+        if (text.includes('FROM rollbackkit_action_runs') && text.includes('WHERE id = $1')) {
+            const id = String(values?.[0]);
+            const row = this.actionRunRows.get(id);
+
+            return createQueryResult((row === undefined ? [] : [row]) as unknown as TResult[]);
+        }
+
+        if (
+            text.includes('FROM rollbackkit_action_runs') &&
+            text.includes('ORDER BY created_at DESC, id DESC')
+        ) {
+            const rows = applyActionHistoryQuery(
+                Array.from(this.actionRunRows.values()),
+                text,
+                values ?? [],
+            );
+
+            return createQueryResult(rows as unknown as TResult[]);
+        }
+
+        return createQueryResult([]);
+    }
+}
+
+function createActionRunRowFromInsertValues(values: readonly unknown[]): ActionRunRow {
+    return {
+        id: String(values[0]),
+        name: String(values[1]),
+        status: values[2] as ActionRunStatus,
+
+        actor_id: String(values[3]),
+        actor_type: String(values[4]),
+        actor: values[5] as ActionActor,
+
+        tenant_id: values[6] as string | null,
+
+        target_type: values[7] as string | null,
+        target_id: values[8] as string | null,
+        target: values[9] as ActionTarget | null,
+
+        input: values[10] as JsonValue,
+        input_hash: values[11] as string | null,
+        reversibility: values[12] as Reversibility,
+
+        created_at: values[13] as Date,
+        executed_at: null,
+        undo_expires_at: values[14] as Date | null,
+        undo_started_at: null,
+        undone_at: null,
+        undone_by: null,
+
+        result: null,
+        undo_result: null,
+        error: null,
+        metadata: values[15] as JsonObject | null,
+    };
+}
+
+function createSnapshotRowFromInsertValues(values: readonly unknown[]): SnapshotRow {
+    return {
+        id: String(values[0]),
+        action_run_id: String(values[1]),
+        key: String(values[2]),
+        value: values[3] as JsonValue,
+        created_at: values[4] as Date,
+        metadata: values[5] as JsonObject | null,
+    };
+}
+
+function createActionSideEffectRowFromInsertValues(
+    values: readonly unknown[],
+): ActionSideEffectRow {
+    return {
+        id: String(values[0]),
+        action_run_id: String(values[1]),
+        type: String(values[2]),
+        status: values[3] as SideEffectStatus,
+        reversibility: values[4] as Reversibility,
+        payload: values[5] as JsonValue | null,
+        created_at: values[6] as Date,
+        metadata: values[7] as JsonObject | null,
+    };
+}
+
+function createActionConflictRowFromInsertValues(values: readonly unknown[]): ActionConflictRow {
+    return {
+        id: String(values[0]),
+        action_run_id: String(values[1]),
+        reason: String(values[2]),
+        details: values[3] as JsonObject | null,
+        created_at: values[4] as Date,
+    };
+}
+
+function applyActionRunUpdateQuery(
+    row: ActionRunRow,
+    text: string,
+    values: readonly unknown[],
+): ActionRunRow {
+    return {
+        ...row,
+        status: readUpdatedValue(text, values, 'status', row.status) as ActionRunStatus,
+        executed_at: readUpdatedValue(text, values, 'executed_at', row.executed_at) as Date | null,
+        undo_started_at: readUpdatedValue(
+            text,
+            values,
+            'undo_started_at',
+            row.undo_started_at,
+        ) as Date | null,
+        undone_at: readUpdatedValue(text, values, 'undone_at', row.undone_at) as Date | null,
+        undone_by: readUpdatedValue(text, values, 'undone_by', row.undone_by) as ActionActor | null,
+        result: readUpdatedValue(text, values, 'result', row.result) as JsonValue | null,
+        undo_result: readUpdatedValue(
+            text,
+            values,
+            'undo_result',
+            row.undo_result,
+        ) as JsonValue | null,
+        error: readUpdatedValue(
+            text,
+            values,
+            'error',
+            row.error,
+        ) as SerializedRollbackKitError | null,
+        metadata: readUpdatedValue(text, values, 'metadata', row.metadata) as JsonObject | null,
+    };
+}
+
+function readUpdatedValue(
+    text: string,
+    values: readonly unknown[],
+    column: string,
+    currentValue: unknown,
+): unknown {
+    const match = new RegExp(`\\b${column}\\s*=\\s*\\$(\\d+)`).exec(text);
+
+    if (match?.[1] === undefined) {
+        return currentValue;
+    }
+
+    return values[Number(match[1]) - 1];
+}
+
+function applyActionHistoryQuery(
+    rows: readonly ActionRunRow[],
+    text: string,
+    values: readonly unknown[],
+): ActionRunRow[] {
+    let result = [...rows];
+
+    result = filterBySqlColumn(result, text, values, 'tenant_id');
+    result = filterBySqlColumn(result, text, values, 'actor_id');
+    result = filterBySqlColumn(result, text, values, 'target_type');
+    result = filterBySqlColumn(result, text, values, 'target_id');
+    result = filterBySqlColumn(result, text, values, 'name');
+    result = filterBySqlColumn(result, text, values, 'status');
+
+    result = applyCursorFilter(result, text, values);
+
+    result.sort((first, second) => {
+        const firstCreatedAt = toTime(first.created_at);
+        const secondCreatedAt = toTime(second.created_at);
+        const byCreatedAt = secondCreatedAt - firstCreatedAt;
+
+        if (byCreatedAt !== 0) {
+            return byCreatedAt;
+        }
+
+        return second.id.localeCompare(first.id);
+    });
+
+    const limit = readLimit(text, values);
+
+    return limit === undefined ? result : result.slice(0, limit);
+}
+
+function filterBySqlColumn(
+    rows: ActionRunRow[],
+    text: string,
+    values: readonly unknown[],
+    column: keyof ActionRunRow,
+): ActionRunRow[] {
+    const value = readSqlEqualsValue(text, values, String(column));
+
+    if (value === undefined) {
+        return rows;
+    }
+
+    return rows.filter((row) => row[column] === value);
+}
+
+function applyCursorFilter(
+    rows: ActionRunRow[],
+    text: string,
+    values: readonly unknown[],
+): ActionRunRow[] {
+    const cursorCreatedAt = readSqlLessThanValue(text, values, 'created_at');
+    const cursorId = readSqlLessThanValue(text, values, 'id');
+
+    if (cursorCreatedAt === undefined || cursorId === undefined) {
+        return rows;
+    }
+
+    const cursorCreatedAtTime = toTime(cursorCreatedAt as Date | string);
+    const cursorIdValue = String(cursorId);
+
+    return rows.filter((row) => {
+        const createdAtTime = toTime(row.created_at);
+
+        return (
+            createdAtTime < cursorCreatedAtTime ||
+            (createdAtTime === cursorCreatedAtTime && row.id < cursorIdValue)
+        );
+    });
+}
+
+function readSqlEqualsValue(text: string, values: readonly unknown[], column: string): unknown {
+    const match = new RegExp(`\\b${column}\\s*=\\s*\\$(\\d+)`).exec(text);
+
+    if (match?.[1] === undefined) {
+        return undefined;
+    }
+
+    return values[Number(match[1]) - 1];
+}
+
+function readSqlLessThanValue(text: string, values: readonly unknown[], column: string): unknown {
+    const match = new RegExp(`\\b${column}\\s*<\\s*\\$(\\d+)`).exec(text);
+
+    if (match?.[1] === undefined) {
+        return undefined;
+    }
+
+    return values[Number(match[1]) - 1];
+}
+
+function readLimit(text: string, values: readonly unknown[]): number | undefined {
+    const match = /\bLIMIT\s+\$(\d+)/.exec(text);
+
+    if (match?.[1] === undefined) {
+        return undefined;
+    }
+
+    return Number(values[Number(match[1]) - 1]);
+}
+
+function toTime(value: Date | string): number {
+    return value instanceof Date ? value.getTime() : new Date(value).getTime();
+}
+
+function createQueryResult<TResult extends QueryResultRow>(rows: TResult[]): QueryResult<TResult> {
+    return {
+        command: '',
+        rowCount: rows.length,
+        oid: 0,
+        fields: [],
+        rows,
+    };
+}

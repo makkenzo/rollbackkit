@@ -1,52 +1,12 @@
-import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
 
 import {
     createPostgresMigrationRunner,
-    type PostgresQueryExecutor,
     ROLLBACKKIT_POSTGRES_MIGRATIONS,
     RollbackKitPostgresMigrationError,
     rollbackkitPostgresVersion,
 } from '../../src/index';
-
-interface RecordedQuery {
-    readonly text: string;
-    readonly values?: unknown[];
-}
-
-interface FakeAppliedMigrationRow extends QueryResultRow {
-    readonly id: string;
-    readonly applied_at: Date | string;
-}
-
-class FakePostgresExecutor implements PostgresQueryExecutor {
-    readonly queries: RecordedQuery[] = [];
-    readonly appliedRows: FakeAppliedMigrationRow[];
-
-    constructor(appliedRows: FakeAppliedMigrationRow[] = []) {
-        this.appliedRows = [...appliedRows];
-    }
-
-    async query<TResult extends QueryResultRow = QueryResultRow>(
-        text: string,
-        values?: unknown[],
-    ): Promise<QueryResult<TResult>> {
-        this.queries.push(values === undefined ? { text } : { text, values });
-
-        if (text.includes('SELECT id, applied_at')) {
-            return createQueryResult(this.appliedRows as unknown as TResult[]);
-        }
-
-        if (text.includes('INSERT INTO rollbackkit_schema_migrations') && values !== undefined) {
-            this.appliedRows.push({
-                id: String(values[0]),
-                applied_at: new Date('2026-01-01T00:00:00.000Z'),
-            });
-        }
-
-        return createQueryResult([]);
-    }
-}
+import { FakePostgresExecutor } from '../helpers/fake-postgres-executor';
 
 describe('@rollbackkit/postgres', () => {
     it('exports package version placeholder', () => {
@@ -146,13 +106,3 @@ describe('@rollbackkit/postgres', () => {
         ).toThrow(RollbackKitPostgresMigrationError);
     });
 });
-
-function createQueryResult<TResult extends QueryResultRow>(rows: TResult[]): QueryResult<TResult> {
-    return {
-        command: '',
-        rowCount: rows.length,
-        oid: 0,
-        fields: [],
-        rows,
-    };
-}
