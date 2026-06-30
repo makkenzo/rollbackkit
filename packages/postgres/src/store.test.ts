@@ -11,7 +11,7 @@ import {
 } from '@rollbackkit/core';
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
-import type { ActionRunRow } from './mappers';
+import type { ActionRunRow, SnapshotRow } from './mappers';
 import type { PostgresQueryExecutor } from './migration-runner';
 import { createPostgresStore } from './store';
 
@@ -23,6 +23,7 @@ interface RecordedQuery {
 class FakePostgresExecutor implements PostgresQueryExecutor {
     readonly queries: RecordedQuery[] = [];
     readonly actionRunRows = new Map<string, ActionRunRow>();
+    readonly snapshotRows = new Map<string, SnapshotRow[]>();
 
     async query<TResult extends QueryResultRow = QueryResultRow>(
         text: string,
@@ -57,6 +58,30 @@ class FakePostgresExecutor implements PostgresQueryExecutor {
             this.actionRunRows.set(id, updated);
 
             return createQueryResult([updated] as unknown as TResult[]);
+        }
+
+        if (text.includes('INSERT INTO rollbackkit_snapshots')) {
+            if (values === undefined) {
+                throw new Error('Expected snapshot insert query values.');
+            }
+
+            const row = createSnapshotRowFromInsertValues(values);
+            const snapshots = this.snapshotRows.get(row.action_run_id) ?? [];
+
+            snapshots.push(row);
+            this.snapshotRows.set(row.action_run_id, snapshots);
+
+            return createQueryResult([row] as unknown as TResult[]);
+        }
+
+        if (
+            text.includes('FROM rollbackkit_snapshots') &&
+            text.includes('WHERE action_run_id = $1')
+        ) {
+            const actionRunId = String(values?.[0]);
+            const rows = this.snapshotRows.get(actionRunId) ?? [];
+
+            return createQueryResult([...rows] as unknown as TResult[]);
         }
 
         if (text.includes('FROM rollbackkit_action_runs') && text.includes('WHERE id = $1')) {
@@ -313,6 +338,118 @@ describe('PostgresStore action runs', () => {
         ).rejects.toBeInstanceOf(RollbackKitError);
     });
 
+    it('saves snapshots', async () => {
+        const now = new Date('2026-01-01T00:00:00.000Z');
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+            clock: {
+                now: () => now,
+            },
+        });
+
+        const run = await store.createActionRun({
+            name: 'member.change_role',
+            actor,
+            input: {
+                memberId: 'member_1',
+                role: 'admin',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const snapshot = await store.saveSnapshot({
+            actionRunId: run.id,
+            key: 'previousRole',
+            value: {
+                role: 'viewer',
+            },
+            metadata: {
+                source: 'execute',
+            },
+        });
+
+        expect(snapshot).toEqual({
+            id: expect.stringMatching(
+                /^snapshot_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+            ),
+            actionRunId: run.id,
+            key: 'previousRole',
+            value: {
+                role: 'viewer',
+            },
+            createdAt: now,
+            metadata: {
+                source: 'execute',
+            },
+        });
+
+        const insertQuery = executor.queries.find((query) =>
+            query.text.includes('INSERT INTO rollbackkit_snapshots'),
+        );
+
+        expect(insertQuery?.values).toEqual([
+            expect.stringMatching(/^snapshot_/),
+            run.id,
+            'previousRole',
+            {
+                role: 'viewer',
+            },
+            now,
+            {
+                source: 'execute',
+            },
+        ]);
+    });
+
+    it('reads snapshots by action run id', async () => {
+        const now = new Date('2026-01-01T00:00:00.000Z');
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+            clock: {
+                now: () => now,
+            },
+        });
+
+        const run = await store.createActionRun({
+            name: 'member.change_role',
+            actor,
+            input: {
+                memberId: 'member_1',
+                role: 'admin',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const first = await store.saveSnapshot({
+            actionRunId: run.id,
+            key: 'previousRole',
+            value: {
+                role: 'viewer',
+            },
+        });
+
+        const second = await store.saveSnapshot({
+            actionRunId: run.id,
+            key: 'previousPermissions',
+            value: {
+                canInvite: false,
+            },
+        });
+
+        await expect(store.getSnapshots(run.id)).resolves.toEqual([first, second]);
+    });
+
+    it('returns an empty snapshot list when action run has no snapshots', async () => {
+        const executor = new FakePostgresExecutor();
+        const store = createPostgresStore({ executor });
+
+        await expect(store.getSnapshots('run_without_snapshots')).resolves.toEqual([]);
+    });
+
     it('returns null when action run does not exist', async () => {
         const executor = new FakePostgresExecutor();
         const store = createPostgresStore({ executor });
@@ -352,6 +489,17 @@ function createActionRunRowFromInsertValues(values: readonly unknown[]): ActionR
         undo_result: null,
         error: null,
         metadata: values[15] as JsonObject | null,
+    };
+}
+
+function createSnapshotRowFromInsertValues(values: readonly unknown[]): SnapshotRow {
+    return {
+        id: String(values[0]),
+        action_run_id: String(values[1]),
+        key: String(values[2]),
+        value: values[3] as JsonValue,
+        created_at: values[4] as Date,
+        metadata: values[5] as JsonObject | null,
     };
 }
 

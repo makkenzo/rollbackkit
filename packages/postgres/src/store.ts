@@ -2,14 +2,16 @@ import {
     type ActionRun,
     type Clock,
     type CreateActionRunInput,
+    type CreateSnapshotInput,
     type JsonValue,
     RollbackKitError,
+    type Snapshot,
     systemClock,
     type UpdateActionRunInput,
 } from '@rollbackkit/core';
 
 import { createRollbackKitPostgresId } from './id';
-import { type ActionRunRow, mapActionRunRow } from './mappers';
+import { type ActionRunRow, mapActionRunRow, mapSnapshotRow, type SnapshotRow } from './mappers';
 import type { PostgresQueryExecutor } from './migration-runner';
 
 const ACTION_RUN_COLUMNS_SQL = `
@@ -35,6 +37,15 @@ undone_by,
 result,
 undo_result,
 error,
+metadata
+`;
+
+const SNAPSHOT_COLUMNS_SQL = `
+id,
+action_run_id,
+key,
+value,
+created_at,
 metadata
 `;
 
@@ -172,6 +183,73 @@ WHERE id = $1
         }
 
         return mapActionRunRow(row) as ActionRun<JsonValue, TResult>;
+    }
+
+    async saveSnapshot<TValue extends JsonValue = JsonValue>(
+        input: CreateSnapshotInput<TValue>,
+    ): Promise<Snapshot<TValue>> {
+        const id = createRollbackKitPostgresId('snapshot');
+        const createdAt = this.#clock.now();
+
+        const result = await this.#executor.query<SnapshotRow>(
+            `
+INSERT INTO rollbackkit_snapshots (
+    id,
+    action_run_id,
+    key,
+    value,
+    created_at,
+    metadata
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4::jsonb,
+    $5,
+    $6::jsonb
+)
+RETURNING ${SNAPSHOT_COLUMNS_SQL}
+`,
+            [
+                id,
+                input.actionRunId,
+                input.key,
+                input.value,
+                createdAt,
+                input.metadata === undefined ? null : input.metadata,
+            ],
+        );
+
+        const row = result.rows[0];
+
+        if (row === undefined) {
+            throw new RollbackKitError({
+                code: 'STORAGE_ERROR',
+                message: 'PostgreSQL did not return a snapshot after insert.',
+                details: {
+                    operation: 'saveSnapshot',
+                    actionRunId: input.actionRunId,
+                    key: input.key,
+                },
+            });
+        }
+
+        return mapSnapshotRow(row) as Snapshot<TValue>;
+    }
+
+    async getSnapshots(actionRunId: string): Promise<readonly Snapshot[]> {
+        const result = await this.#executor.query<SnapshotRow>(
+            `
+SELECT ${SNAPSHOT_COLUMNS_SQL}
+FROM rollbackkit_snapshots
+WHERE action_run_id = $1
+ORDER BY created_at ASC, id ASC
+`,
+            [actionRunId],
+        );
+
+        return result.rows.map(mapSnapshotRow);
     }
 }
 
