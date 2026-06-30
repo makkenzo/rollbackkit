@@ -1,7 +1,6 @@
 import type { JsonValue, UpdateActionRunInput } from '@rollbackkit/core';
-
-import { ACTION_RUN_COLUMNS_SQL } from './sql-columns';
 import { encodeJsonb } from './jsonb';
+import { ACTION_RUN_COLUMNS_SQL } from './sql-columns';
 
 export interface BuiltActionRunUpdateQuery {
     readonly text: string;

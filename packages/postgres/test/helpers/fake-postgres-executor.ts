@@ -357,31 +357,43 @@ function applyActionRunUpdateQuery(
         undone_by: readNullableJsonbValue(
             readUpdatedValue(text, values, 'undone_by', row.undone_by),
         ) as ActionActor | null,
-        result: readNullableJsonbValue(readUpdatedValue(text, values, 'result', row.result)) as
-            | JsonValue
-            | null,
-        result_present: hasUpdatedValue(text, 'result') ? true : row.result_present,
-        undo_result: readNullableJsonbValue(
-            readUpdatedValue(
-                text,
-                values,
-                'undo_result',
-                row.undo_result,
-            ),
+        result: readNullableJsonbValue(
+            readUpdatedValue(text, values, 'result', row.result),
         ) as JsonValue | null,
-        undo_result_present: hasUpdatedValue(text, 'undo_result') ? true : row.undo_result_present,
+        ...readUpdatedPresenceFlag(row.result_present, hasUpdatedValue(text, 'result'), 'result'),
+        undo_result: readNullableJsonbValue(
+            readUpdatedValue(text, values, 'undo_result', row.undo_result),
+        ) as JsonValue | null,
+        ...readUpdatedPresenceFlag(
+            row.undo_result_present,
+            hasUpdatedValue(text, 'undo_result'),
+            'undo_result',
+        ),
         error: readNullableJsonbValue(
-            readUpdatedValue(
-            text,
-            values,
-            'error',
-            row.error,
-            ),
+            readUpdatedValue(text, values, 'error', row.error),
         ) as SerializedRollbackKitError | null,
         metadata: readNullableJsonbValue(
             readUpdatedValue(text, values, 'metadata', row.metadata),
         ) as JsonObject | null,
     };
+}
+
+function readUpdatedPresenceFlag(
+    currentValue: boolean | undefined,
+    updated: boolean,
+    column: 'result' | 'undo_result',
+): Pick<ActionRunRow, 'result_present' | 'undo_result_present'> {
+    if (updated) {
+        return column === 'result' ? { result_present: true } : { undo_result_present: true };
+    }
+
+    if (currentValue === undefined) {
+        return {};
+    }
+
+    return column === 'result'
+        ? { result_present: currentValue }
+        : { undo_result_present: currentValue };
 }
 
 function hasUpdatedValue(text: string, column: string): boolean {

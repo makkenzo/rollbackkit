@@ -411,13 +411,7 @@ VALUES (
 )
 RETURNING ${CONFLICT_COLUMNS_SQL}
 `,
-            [
-                id,
-                input.actionRunId,
-                input.reason,
-                encodeOptionalJsonb(input.details),
-                createdAt,
-            ],
+            [id, input.actionRunId, input.reason, encodeOptionalJsonb(input.details), createdAt],
         );
 
         const row = result.rows[0];
