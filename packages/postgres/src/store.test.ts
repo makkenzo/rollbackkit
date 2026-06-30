@@ -9,6 +9,7 @@ import {
     RollbackKitError,
     type SerializedRollbackKitError,
     type SideEffectStatus,
+    type StorageAdapter,
 } from '@rollbackkit/core';
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
@@ -159,6 +160,13 @@ const target: ActionTarget = {
 };
 
 describe('PostgresStore action runs', () => {
+    it('implements the core storage adapter contract', () => {
+        const executor = new FakePostgresExecutor();
+        const store: StorageAdapter = createPostgresStore({ executor });
+
+        expect(store).toBeDefined();
+    });
+
     it('creates action runs', async () => {
         const now = new Date('2026-01-01T00:00:00.000Z');
         const undoExpiresAt = new Date('2026-01-01T00:01:00.000Z');
@@ -966,6 +974,101 @@ describe('PostgresStore action runs', () => {
         );
 
         expect(historyQuery).toBeUndefined();
+    });
+
+    it('runs locked action handlers inside a transaction', async () => {
+        const executor = new FakePostgresExecutor();
+        const store = createPostgresStore({ executor });
+
+        const created = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const handlerResult = await store.withActionRunLock(created.id, async (lockedRun) => {
+            expect(lockedRun).toEqual(created);
+
+            await store.updateActionRun(lockedRun.id, {
+                status: 'completed',
+            });
+
+            return {
+                ok: true,
+            };
+        });
+
+        expect(handlerResult).toEqual({
+            ok: true,
+        });
+
+        const transactionQueries = executor.queries
+            .map((query) => query.text.trim())
+            .filter(
+                (text) =>
+                    text === 'BEGIN' ||
+                    text === 'COMMIT' ||
+                    text === 'ROLLBACK' ||
+                    text.includes('FOR UPDATE') ||
+                    text.includes('UPDATE rollbackkit_action_runs'),
+            );
+
+        expect(transactionQueries).toEqual([
+            'BEGIN',
+            expect.stringContaining('FOR UPDATE'),
+            expect.stringContaining('UPDATE rollbackkit_action_runs'),
+            'COMMIT',
+        ]);
+
+        await expect(store.getActionRun(created.id)).resolves.toMatchObject({
+            status: 'completed',
+        });
+    });
+
+    it('rolls back locked handlers when the handler throws', async () => {
+        const executor = new FakePostgresExecutor();
+        const store = createPostgresStore({ executor });
+
+        const created = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        await expect(
+            store.withActionRunLock(created.id, async () => {
+                throw new Error('Handler failed.');
+            }),
+        ).rejects.toThrow('Handler failed.');
+
+        const transactionQueries = executor.queries
+            .map((query) => query.text.trim())
+            .filter((text) => text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK');
+
+        expect(transactionQueries).toEqual(['BEGIN', 'ROLLBACK']);
+    });
+
+    it('rolls back when locking a missing action run', async () => {
+        const executor = new FakePostgresExecutor();
+        const store = createPostgresStore({ executor });
+
+        await expect(
+            store.withActionRunLock('missing_run', async () => {
+                throw new Error('Handler should not run.');
+            }),
+        ).rejects.toBeInstanceOf(RollbackKitError);
+
+        const transactionQueries = executor.queries
+            .map((query) => query.text.trim())
+            .filter((text) => text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK');
+
+        expect(transactionQueries).toEqual(['BEGIN', 'ROLLBACK']);
     });
 
     it('returns null when action run does not exist', async () => {

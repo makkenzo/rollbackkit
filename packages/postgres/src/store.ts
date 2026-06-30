@@ -11,6 +11,7 @@ import {
     type RecordSideEffectInput,
     RollbackKitError,
     type Snapshot,
+    type StorageAdapter,
     systemClock,
     type UpdateActionRunInput,
 } from '@rollbackkit/core';
@@ -83,11 +84,20 @@ created_at
 `;
 
 export interface PostgresStoreOptions {
+    /**
+     * Query executor used by the store.
+     *
+     * For lock-safe undo, pass a transaction-capable single-connection executor,
+     * such as `pg.Client` or `pg.PoolClient`.
+     *
+     * Do not pass a bare `pg.Pool` when using `withActionRunLock`, because
+     * `pool.query("BEGIN")` and later queries are not guaranteed to use the same connection.
+     */
     readonly executor: PostgresQueryExecutor;
     readonly clock?: Clock;
 }
 
-export class PostgresStore {
+export class PostgresStore implements StorageAdapter {
     readonly #executor: PostgresQueryExecutor;
     readonly #clock: Clock;
 
@@ -466,6 +476,41 @@ ${limitSql}
         );
 
         return result.rows.map(mapActionRunRow);
+    }
+
+    async withActionRunLock<TValue>(
+        actionRunId: string,
+        handler: (run: ActionRun) => Promise<TValue>,
+    ): Promise<TValue> {
+        await this.#executor.query('BEGIN');
+
+        try {
+            const result = await this.#executor.query<ActionRunRow>(
+                `
+SELECT ${ACTION_RUN_COLUMNS_SQL}
+FROM rollbackkit_action_runs
+WHERE id = $1
+FOR UPDATE
+`,
+                [actionRunId],
+            );
+
+            const row = result.rows[0];
+
+            if (row === undefined) {
+                throw createActionRunNotFoundError(actionRunId);
+            }
+
+            const value = await handler(mapActionRunRow(row));
+
+            await this.#executor.query('COMMIT');
+
+            return value;
+        } catch (error) {
+            await this.#executor.query('ROLLBACK').catch(() => undefined);
+
+            throw error;
+        }
     }
 }
 
