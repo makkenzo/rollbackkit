@@ -20,6 +20,7 @@ import {
 
 import { createActionRunUpdateQuery } from './action-run-update-query';
 import { createRollbackKitPostgresId } from './id';
+import { encodeJsonb, encodeOptionalJsonb } from './jsonb';
 import {
     type ActionConflictRow,
     type ActionRunRow,
@@ -170,18 +171,18 @@ RETURNING ${ACTION_RUN_COLUMNS_SQL}
                 'created',
                 input.actor.id,
                 input.actor.type,
-                input.actor,
+                encodeJsonb(input.actor),
                 input.tenantId === undefined ? null : input.tenantId,
                 input.target === undefined ? null : input.target.type,
                 input.target === undefined ? null : input.target.id,
-                input.target === undefined ? null : input.target,
-                input.input,
+                encodeOptionalJsonb(input.target),
+                encodeJsonb(input.input),
                 input.inputHash === undefined ? null : input.inputHash,
                 input.idempotencyKey === undefined ? null : input.idempotencyKey,
-                input.reversibility,
+                encodeJsonb(input.reversibility),
                 createdAt,
                 input.undoExpiresAt === undefined ? null : input.undoExpiresAt,
-                input.metadata === undefined ? null : input.metadata,
+                encodeOptionalJsonb(input.metadata),
             ],
         );
 
@@ -292,9 +293,9 @@ RETURNING ${SNAPSHOT_COLUMNS_SQL}
                 id,
                 input.actionRunId,
                 input.key,
-                input.value,
+                encodeJsonb(input.value),
                 createdAt,
-                input.metadata === undefined ? null : input.metadata,
+                encodeOptionalJsonb(input.metadata),
             ],
         );
 
@@ -364,10 +365,10 @@ RETURNING ${SIDE_EFFECT_COLUMNS_SQL}
                 input.actionRunId,
                 input.type,
                 input.status,
-                input.reversibility,
-                input.payload === undefined ? null : input.payload,
+                encodeJsonb(input.reversibility),
+                encodeOptionalJsonb(input.payload),
                 createdAt,
-                input.metadata === undefined ? null : input.metadata,
+                encodeOptionalJsonb(input.metadata),
             ],
         );
 
@@ -414,7 +415,7 @@ RETURNING ${CONFLICT_COLUMNS_SQL}
                 id,
                 input.actionRunId,
                 input.reason,
-                input.details === undefined ? null : input.details,
+                encodeOptionalJsonb(input.details),
                 createdAt,
             ],
         );

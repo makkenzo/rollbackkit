@@ -20,7 +20,9 @@ undo_started_at,
 undone_at,
 undone_by,
 result,
+result IS NOT NULL AS result_present,
 undo_result,
+undo_result IS NOT NULL AS undo_result_present,
 error,
 metadata
 `;
@@ -41,6 +43,7 @@ type,
 status,
 reversibility,
 payload,
+payload IS NOT NULL AS payload_present,
 created_at,
 metadata
 `;

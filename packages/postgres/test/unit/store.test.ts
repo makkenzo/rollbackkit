@@ -230,13 +230,40 @@ describe('PostgresStore action runs', () => {
             created.id,
             'completed',
             executedAt,
-            {
-                archived: true,
-            },
-            {
-                source: 'execute',
-            },
+            '{"archived":true}',
+            '{"source":"execute"}',
         ]);
+    });
+
+    it('preserves JSON null when updating action run result fields', async () => {
+        const executor = new FakePostgresExecutor();
+        const store = createPostgresStore({ executor });
+
+        const created = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            input: {},
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const updated = await store.updateActionRun(created.id, {
+            status: 'undone',
+            result: null,
+            undoResult: null,
+        });
+
+        expect(updated).toEqual({
+            ...created,
+            status: 'undone',
+            result: null,
+            undoResult: null,
+        });
+
+        const updateQuery = executor.queries.find((query) =>
+            query.text.includes('UPDATE rollbackkit_action_runs'),
+        );
+
+        expect(updateQuery?.values).toEqual([created.id, 'undone', 'null', 'null']);
     });
 
     it('updates undo fields', async () => {
@@ -301,6 +328,47 @@ describe('PostgresStore action runs', () => {
         );
 
         expect(updateQuery).toBeUndefined();
+    });
+
+    it('preserves required JSON null action input and snapshot values separately from SQL NULL metadata', async () => {
+        const now = new Date('2026-01-01T00:00:00.000Z');
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+            clock: {
+                now: () => now,
+            },
+        });
+
+        const run = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            input: null,
+            reversibility: REVERSIBILITY.full,
+        });
+
+        expect(run.input).toBeNull();
+
+        const snapshot = await store.saveSnapshot({
+            actionRunId: run.id,
+            key: 'previousState',
+            value: null,
+        });
+
+        expect(snapshot.value).toBeNull();
+
+        const actionRunInsertQuery = executor.queries.find((query) =>
+            query.text.includes('INSERT INTO rollbackkit_action_runs'),
+        );
+        const snapshotInsertQuery = executor.queries.find((query) =>
+            query.text.includes('INSERT INTO rollbackkit_snapshots'),
+        );
+
+        expect(actionRunInsertQuery?.values?.[10]).toBe('null');
+        expect(actionRunInsertQuery?.values?.[16]).toBeNull();
+        expect(snapshotInsertQuery?.values?.[3]).toBe('null');
+        expect(snapshotInsertQuery?.values?.[5]).toBeNull();
     });
 
     it('throws when updating a missing action run', async () => {
@@ -369,13 +437,9 @@ describe('PostgresStore action runs', () => {
             expect.stringMatching(/^snapshot_/),
             run.id,
             'previousRole',
-            {
-                role: 'viewer',
-            },
+            '{"role":"viewer"}',
             now,
-            {
-                source: 'execute',
-            },
+            '{"source":"execute"}',
         ]);
     });
 
@@ -485,15 +549,58 @@ describe('PostgresStore action runs', () => {
             run.id,
             'email.sent',
             'completed',
-            REVERSIBILITY.irreversible,
-            {
-                template: 'document_archived',
-            },
+            '{"kind":"irreversible","undoable":false}',
+            '{"template":"document_archived"}',
             now,
-            {
-                provider: 'test',
-            },
+            '{"provider":"test"}',
         ]);
+    });
+
+    it('preserves JSON null side effect payload separately from absent metadata', async () => {
+        const now = new Date('2026-01-01T00:00:00.000Z');
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+            clock: {
+                now: () => now,
+            },
+        });
+
+        const run = await store.createActionRun({
+            name: 'document.archive',
+            actor,
+            input: {},
+            reversibility: REVERSIBILITY.partial,
+        });
+
+        const sideEffect = await store.recordSideEffect({
+            actionRunId: run.id,
+            type: 'email.sent',
+            status: 'completed',
+            reversibility: REVERSIBILITY.irreversible,
+            payload: null,
+        });
+
+        expect(sideEffect.id).toMatch(
+            /^effect_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+        );
+        expect(sideEffect).toEqual({
+            id: sideEffect.id,
+            actionRunId: run.id,
+            type: 'email.sent',
+            status: 'completed',
+            reversibility: REVERSIBILITY.irreversible,
+            payload: null,
+            createdAt: now,
+        });
+
+        const insertQuery = executor.queries.find((query) =>
+            query.text.includes('INSERT INTO rollbackkit_side_effects'),
+        );
+
+        expect(insertQuery?.values?.[5]).toBe('null');
+        expect(insertQuery?.values?.[7]).toBeNull();
     });
 
     it('records side effects without optional payload and metadata', async () => {
@@ -579,9 +686,7 @@ describe('PostgresStore action runs', () => {
             expect.stringMatching(/^conflict_/),
             run.id,
             'Expected project to be archived, but it was deleted.',
-            {
-                projectId: 'project_1',
-            },
+            '{"projectId":"project_1"}',
             now,
         ]);
     });

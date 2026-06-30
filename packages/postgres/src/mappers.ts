@@ -42,7 +42,9 @@ export interface ActionRunRow extends QueryResultRow {
     readonly undone_by: ActionActor | null;
 
     readonly result: JsonValue | null;
+    readonly result_present?: boolean;
     readonly undo_result: JsonValue | null;
+    readonly undo_result_present?: boolean;
     readonly error: SerializedRollbackKitError | null;
     readonly metadata: JsonObject | null;
 }
@@ -63,6 +65,7 @@ export interface ActionSideEffectRow extends QueryResultRow {
     readonly status: SideEffectStatus;
     readonly reversibility: Reversibility;
     readonly payload: JsonValue | null;
+    readonly payload_present?: boolean;
     readonly created_at: Date | string;
     readonly metadata: JsonObject | null;
 }
@@ -98,8 +101,10 @@ export function mapActionRunRow(row: ActionRunRow): ActionRun {
         ...(undoStartedAt === undefined ? {} : { undoStartedAt }),
         ...(undoneAt === undefined ? {} : { undoneAt }),
         ...(row.undone_by === null ? {} : { undoneBy: row.undone_by }),
-        ...(row.result === null ? {} : { result: row.result }),
-        ...(row.undo_result === null ? {} : { undoResult: row.undo_result }),
+        ...(row.result === null && row.result_present !== true ? {} : { result: row.result }),
+        ...(row.undo_result === null && row.undo_result_present !== true
+            ? {}
+            : { undoResult: row.undo_result }),
         ...(row.error === null ? {} : { error: row.error }),
         ...(row.metadata === null ? {} : { metadata: row.metadata }),
     };
@@ -124,7 +129,7 @@ export function mapActionSideEffectRow(row: ActionSideEffectRow): ActionSideEffe
         status: row.status,
         reversibility: row.reversibility,
         createdAt: mapDate(row.created_at, 'created_at'),
-        ...(row.payload === null ? {} : { payload: row.payload }),
+        ...(row.payload === null && row.payload_present !== true ? {} : { payload: row.payload }),
         ...(row.metadata === null ? {} : { metadata: row.metadata }),
     };
 }

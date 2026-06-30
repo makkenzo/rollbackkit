@@ -272,18 +272,18 @@ function createActionRunRowFromInsertValues(values: readonly unknown[]): ActionR
 
         actor_id: String(values[3]),
         actor_type: String(values[4]),
-        actor: values[5] as ActionActor,
+        actor: readJsonbValue(values[5]) as ActionActor,
 
         tenant_id: values[6] as string | null,
 
         target_type: values[7] as string | null,
         target_id: values[8] as string | null,
-        target: values[9] as ActionTarget | null,
+        target: readNullableJsonbValue(values[9]) as ActionTarget | null,
 
-        input: values[10] as JsonValue,
+        input: readJsonbValue(values[10]) as JsonValue,
         input_hash: values[11] as string | null,
         idempotency_key: values[12] as string | null,
-        reversibility: values[13] as Reversibility,
+        reversibility: readJsonbValue(values[13]) as Reversibility,
 
         created_at: values[14] as Date,
         executed_at: null,
@@ -293,9 +293,11 @@ function createActionRunRowFromInsertValues(values: readonly unknown[]): ActionR
         undone_by: null,
 
         result: null,
+        result_present: false,
         undo_result: null,
+        undo_result_present: false,
         error: null,
-        metadata: values[16] as JsonObject | null,
+        metadata: readNullableJsonbValue(values[16]) as JsonObject | null,
     };
 }
 
@@ -304,9 +306,9 @@ function createSnapshotRowFromInsertValues(values: readonly unknown[]): Snapshot
         id: String(values[0]),
         action_run_id: String(values[1]),
         key: String(values[2]),
-        value: values[3] as JsonValue,
+        value: readJsonbValue(values[3]) as JsonValue,
         created_at: values[4] as Date,
-        metadata: values[5] as JsonObject | null,
+        metadata: readNullableJsonbValue(values[5]) as JsonObject | null,
     };
 }
 
@@ -318,10 +320,11 @@ function createActionSideEffectRowFromInsertValues(
         action_run_id: String(values[1]),
         type: String(values[2]),
         status: values[3] as SideEffectStatus,
-        reversibility: values[4] as Reversibility,
-        payload: values[5] as JsonValue | null,
+        reversibility: readJsonbValue(values[4]) as Reversibility,
+        payload: readNullableJsonbValue(values[5]) as JsonValue | null,
+        payload_present: values[5] !== null,
         created_at: values[6] as Date,
-        metadata: values[7] as JsonObject | null,
+        metadata: readNullableJsonbValue(values[7]) as JsonObject | null,
     };
 }
 
@@ -330,7 +333,7 @@ function createActionConflictRowFromInsertValues(values: readonly unknown[]): Ac
         id: String(values[0]),
         action_run_id: String(values[1]),
         reason: String(values[2]),
-        details: values[3] as JsonObject | null,
+        details: readNullableJsonbValue(values[3]) as JsonObject | null,
         created_at: values[4] as Date,
     };
 }
@@ -351,22 +354,38 @@ function applyActionRunUpdateQuery(
             row.undo_started_at,
         ) as Date | null,
         undone_at: readUpdatedValue(text, values, 'undone_at', row.undone_at) as Date | null,
-        undone_by: readUpdatedValue(text, values, 'undone_by', row.undone_by) as ActionActor | null,
-        result: readUpdatedValue(text, values, 'result', row.result) as JsonValue | null,
-        undo_result: readUpdatedValue(
-            text,
-            values,
-            'undo_result',
-            row.undo_result,
+        undone_by: readNullableJsonbValue(
+            readUpdatedValue(text, values, 'undone_by', row.undone_by),
+        ) as ActionActor | null,
+        result: readNullableJsonbValue(readUpdatedValue(text, values, 'result', row.result)) as
+            | JsonValue
+            | null,
+        result_present: hasUpdatedValue(text, 'result') ? true : row.result_present,
+        undo_result: readNullableJsonbValue(
+            readUpdatedValue(
+                text,
+                values,
+                'undo_result',
+                row.undo_result,
+            ),
         ) as JsonValue | null,
-        error: readUpdatedValue(
+        undo_result_present: hasUpdatedValue(text, 'undo_result') ? true : row.undo_result_present,
+        error: readNullableJsonbValue(
+            readUpdatedValue(
             text,
             values,
             'error',
             row.error,
+            ),
         ) as SerializedRollbackKitError | null,
-        metadata: readUpdatedValue(text, values, 'metadata', row.metadata) as JsonObject | null,
+        metadata: readNullableJsonbValue(
+            readUpdatedValue(text, values, 'metadata', row.metadata),
+        ) as JsonObject | null,
     };
+}
+
+function hasUpdatedValue(text: string, column: string): boolean {
+    return new RegExp(`\\b${column}\\s*=\\s*\\$(\\d+)`).test(text);
 }
 
 function readUpdatedValue(
@@ -382,6 +401,14 @@ function readUpdatedValue(
     }
 
     return values[Number(match[1]) - 1];
+}
+
+function readNullableJsonbValue(value: unknown): unknown {
+    return value === null ? null : readJsonbValue(value);
+}
+
+function readJsonbValue(value: unknown): unknown {
+    return typeof value === 'string' ? JSON.parse(value) : value;
 }
 
 function applyActionHistoryQuery(

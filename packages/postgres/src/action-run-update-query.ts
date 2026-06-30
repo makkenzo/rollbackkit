@@ -1,6 +1,7 @@
 import type { JsonValue, UpdateActionRunInput } from '@rollbackkit/core';
 
 import { ACTION_RUN_COLUMNS_SQL } from './sql-columns';
+import { encodeJsonb } from './jsonb';
 
 export interface BuiltActionRunUpdateQuery {
     readonly text: string;
@@ -36,23 +37,23 @@ export function createActionRunUpdateQuery<TResult extends JsonValue>(
     }
 
     if (input.undoneBy !== undefined) {
-        pushAssignment('undone_by', input.undoneBy, '::jsonb');
+        pushAssignment('undone_by', encodeJsonb(input.undoneBy), '::jsonb');
     }
 
     if (input.result !== undefined) {
-        pushAssignment('result', input.result, '::jsonb');
+        pushAssignment('result', encodeJsonb(input.result), '::jsonb');
     }
 
     if (input.undoResult !== undefined) {
-        pushAssignment('undo_result', input.undoResult, '::jsonb');
+        pushAssignment('undo_result', encodeJsonb(input.undoResult), '::jsonb');
     }
 
     if (input.error !== undefined) {
-        pushAssignment('error', input.error, '::jsonb');
+        pushAssignment('error', encodeJsonb(input.error), '::jsonb');
     }
 
     if (input.metadata !== undefined) {
-        pushAssignment('metadata', input.metadata, '::jsonb');
+        pushAssignment('metadata', encodeJsonb(input.metadata), '::jsonb');
     }
 
     if (assignments.length === 0) {
