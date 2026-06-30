@@ -308,7 +308,7 @@ td:first-child {
     font-size: 0.88rem;
 }
 
-.audit-item span {
+.status-badge {
     flex: 0 0 auto;
     border: 1px solid #e5e5e5;
     border-radius: 999px;
@@ -316,6 +316,40 @@ td:first-child {
     color: #555555;
     font-size: 0.75rem;
     font-weight: 600;
+}
+
+.status-badge.neutral {
+    border-color: #e5e5e5;
+    background: #fafafa;
+    color: #555555;
+}
+
+.status-badge.success {
+    border-color: #bbf7d0;
+    background: #f0fdf4;
+    color: #166534;
+}
+
+.status-badge.warning {
+    border-color: #fed7aa;
+    background: #fff7ed;
+    color: #9a3412;
+}
+
+.status-badge.danger {
+    border-color: #fecaca;
+    background: #fef2f2;
+    color: #991b1b;
+}
+
+.empty-state {
+    margin: 0;
+    border: 1px dashed #e5e5e5;
+    border-radius: 14px;
+    padding: 18px;
+    color: #777777;
+    font-size: 0.9rem;
+    text-align: center;
 }
 
 .policy-list {

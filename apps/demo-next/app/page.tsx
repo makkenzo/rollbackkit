@@ -1,13 +1,20 @@
 import type { ReactNode } from 'react';
-import { demoAuditTrail, demoPreviewImpact } from '../lib/demo-data';
+import { demoPreviewImpact } from '../lib/demo-data';
 import type { DemoPreviewImpact, DemoProject } from '../lib/demo-domain';
+import {
+    type DemoActionHistoryEntry,
+    getDemoActionHistory,
+} from '../lib/server/action-history-repository';
 import { getDemoDashboardData } from '../lib/server/demo-repository';
 import { ProjectArchiveControl } from './components/project-archive-control';
 
 export const dynamic = 'force-dynamic';
 
 export default async function DemoHomePage() {
-    const dashboard = await getDemoDashboardData();
+    const [dashboard, actionHistory] = await Promise.all([
+        getDemoDashboardData(),
+        getDemoActionHistory(),
+    ]);
 
     return (
         <main className="app-shell">
@@ -120,17 +127,7 @@ export default async function DemoHomePage() {
                         title="Audit trail"
                         description="Every completed action leaves a durable product-level record."
                     >
-                        <div className="audit-list">
-                            {demoAuditTrail.map((entry) => (
-                                <article className="audit-item" key={entry.id}>
-                                    <div>
-                                        <code>{entry.action}</code>
-                                        <p>{entry.target}</p>
-                                    </div>
-                                    <span>{entry.status}</span>
-                                </article>
-                            ))}
-                        </div>
+                        <ActionHistoryList entries={actionHistory} />
                     </DataPanel>
 
                     <DataPanel
@@ -255,6 +252,32 @@ function DataTable({ columns, rows }: DataTableProps) {
                     ))}
                 </tbody>
             </table>
+        </div>
+    );
+}
+
+interface ActionHistoryListProps {
+    readonly entries: readonly DemoActionHistoryEntry[];
+}
+
+function ActionHistoryList({ entries }: ActionHistoryListProps) {
+    if (entries.length === 0) {
+        return <p className="empty-state">No actions recorded yet.</p>;
+    }
+
+    return (
+        <div className="audit-list">
+            {entries.map((entry) => (
+                <article className="audit-item" key={entry.id}>
+                    <div>
+                        <code>{entry.actionName}</code>
+                        <p>
+                            {entry.targetLabel} · {entry.actorLabel} · {entry.occurredAt}
+                        </p>
+                    </div>
+                    <span className={`status-badge ${entry.statusTone}`}>{entry.statusLabel}</span>
+                </article>
+            ))}
         </div>
     );
 }
