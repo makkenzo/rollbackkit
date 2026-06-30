@@ -3,9 +3,9 @@ import 'server-only';
 import { createRollbackKit, type RollbackKit } from '@rollbackkit/core';
 import { createPostgresStore, type PostgresQueryExecutor } from '@rollbackkit/postgres';
 import type { PoolClient } from 'pg';
-import { createMemberChangeRoleAction } from './actions/member-change-role';
-import { createMemberRemoveAction } from './actions/member-remove';
-import { createProjectArchiveAction } from './actions/project-archive';
+import { createMemberChangeRoleAction } from './actions/member-change-role.action';
+import { createMemberRemoveAction } from './actions/member-remove.action';
+import { createProjectArchiveAction } from './actions/project-archive.action';
 import { getDemoPostgresPool } from './demo-db';
 
 export interface DemoRollbackKitRuntime {

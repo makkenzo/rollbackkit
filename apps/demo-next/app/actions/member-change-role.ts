@@ -11,6 +11,10 @@ export async function previewMemberRoleChange(memberId: string, role: EditableMe
     return previewMemberRoleChangeService(memberId, role);
 }
 
-export async function executeMemberRoleChange(memberId: string, role: EditableMemberRole) {
-    return executeMemberRoleChangeService(memberId, role);
+export async function executeMemberRoleChange(
+    memberId: string,
+    role: EditableMemberRole,
+    idempotencyKey: string,
+) {
+    return executeMemberRoleChangeService(memberId, role, idempotencyKey);
 }

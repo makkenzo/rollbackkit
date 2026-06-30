@@ -2,15 +2,14 @@ import 'server-only';
 
 import type { PreviewResult } from '@rollbackkit/core';
 
-import { PROJECT_ARCHIVE_ACTION_NAME } from './actions/project-archive';
+import { PROJECT_ARCHIVE_ACTION_NAME } from './actions/project-archive.action';
 import {
-    DEMO_ACTOR,
-    DEMO_TENANT_ID,
     type DemoActionResponse,
     type DemoActionRunDto,
     runDemoAction,
     serializeActionRun,
 } from './demo-action-service';
+import { DEMO_ACTOR, DEMO_TENANT_ID } from './demo-request-context';
 import { withDemoRollbackKit } from './rollbackkit';
 
 export async function previewProjectArchive(
@@ -32,6 +31,7 @@ export async function previewProjectArchive(
 
 export async function executeProjectArchive(
     projectId: string,
+    idempotencyKey: string,
 ): Promise<DemoActionResponse<DemoActionRunDto>> {
     return runDemoAction(async () =>
         withDemoRollbackKit(async ({ rollbackkit }) => {
@@ -39,24 +39,10 @@ export async function executeProjectArchive(
                 name: PROJECT_ARCHIVE_ACTION_NAME,
                 actor: DEMO_ACTOR,
                 tenantId: DEMO_TENANT_ID,
+                idempotencyKey,
                 input: {
                     projectId,
                 },
-            });
-
-            return serializeActionRun(run);
-        }),
-    );
-}
-
-export async function undoDemoActionRun(
-    actionRunId: string,
-): Promise<DemoActionResponse<DemoActionRunDto>> {
-    return runDemoAction(async () =>
-        withDemoRollbackKit(async ({ rollbackkit }) => {
-            const run = await rollbackkit.undo({
-                actionRunId,
-                actor: DEMO_ACTOR,
             });
 
             return serializeActionRun(run);

@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import type { DemoActionHistoryEntry } from '../../lib/server/action-history-repository';
-import { undoDemoActionRun } from '../actions/project-archive';
+import { undoDemoActionRun } from '../actions/action-runs';
 
 interface ActionHistoryListProps {
     readonly entries: readonly DemoActionHistoryEntry[];

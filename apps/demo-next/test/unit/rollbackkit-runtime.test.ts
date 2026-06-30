@@ -1,8 +1,8 @@
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
-import { MEMBER_CHANGE_ROLE_ACTION_NAME } from '../../lib/server/actions/member-change-role';
-import { MEMBER_REMOVE_ACTION_NAME } from '../../lib/server/actions/member-remove';
-import { PROJECT_ARCHIVE_ACTION_NAME } from '../../lib/server/actions/project-archive';
+import { MEMBER_CHANGE_ROLE_ACTION_NAME } from '../../lib/server/actions/member-change-role.action';
+import { MEMBER_REMOVE_ACTION_NAME } from '../../lib/server/actions/member-remove.action';
+import { PROJECT_ARCHIVE_ACTION_NAME } from '../../lib/server/actions/project-archive.action';
 import { createDemoRollbackKit } from '../../lib/server/rollbackkit';
 
 describe('demo RollbackKit runtime', () => {

@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
 import { executeMemberRoleChange, previewMemberRoleChange } from '../actions/member-change-role';
+import { createDemoIdempotencyKey } from './demo-idempotency-key';
 
 type DemoMemberRole = 'Owner' | 'Admin' | 'Viewer';
 type EditableMemberRole = 'admin' | 'viewer';
@@ -41,6 +42,7 @@ export function MemberRoleChangeControl({
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [preview, setPreview] = useState<PreviewState | null>(null);
     const [error, setError] = useState<ActionErrorState | null>(null);
+    const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
 
     const targetRole = getTargetRole(role);
     const isBusy = isPending;
@@ -54,6 +56,7 @@ export function MemberRoleChangeControl({
 
         setError(null);
         setPreview(null);
+        setIdempotencyKey(createDemoIdempotencyKey(`member.change_role:${memberId}:${nextRole}`));
         setIsDialogOpen(true);
 
         startTransition(async () => {
@@ -76,6 +79,7 @@ export function MemberRoleChangeControl({
         setIsDialogOpen(false);
         setPreview(null);
         setError(null);
+        setIdempotencyKey(null);
     }
 
     function changeRole() {
@@ -88,7 +92,13 @@ export function MemberRoleChangeControl({
         setError(null);
 
         startTransition(async () => {
-            const response = await executeMemberRoleChange(memberId, nextRole);
+            const requestId =
+                idempotencyKey ??
+                createDemoIdempotencyKey(`member.change_role:${memberId}:${nextRole}`);
+
+            setIdempotencyKey(requestId);
+
+            const response = await executeMemberRoleChange(memberId, nextRole, requestId);
 
             if (!response.ok) {
                 setError(response.error);
@@ -97,6 +107,7 @@ export function MemberRoleChangeControl({
 
             setIsDialogOpen(false);
             setPreview(null);
+            setIdempotencyKey(null);
             router.refresh();
         });
     }

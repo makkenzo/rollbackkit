@@ -11,8 +11,7 @@ import type {
 import type { QueryResultRow } from 'pg';
 
 import { getDemoPostgresPool } from './demo-db';
-
-const DEMO_TENANT_ID = 'workspace_acme';
+import { DEMO_TENANT_ID } from './demo-request-context';
 
 export type DemoActionHistoryTone = 'neutral' | 'success' | 'warning' | 'danger';
 

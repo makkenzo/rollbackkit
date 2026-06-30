@@ -2,11 +2,11 @@ import { createPostgresMigrationRunner } from '@rollbackkit/postgres';
 import { Client } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { undoDemoActionRun } from '../../app/actions/action-runs';
 import {
     executeMemberRoleChange,
     previewMemberRoleChange,
 } from '../../app/actions/member-change-role';
-import { undoDemoActionRun } from '../../app/actions/project-archive';
 import { closeDemoPostgresPool } from '../../lib/server/demo-db';
 import { readDemoSql } from '../helpers/demo-sql';
 
@@ -87,7 +87,11 @@ WHERE id = $1
             'Undo is available for 30 minutes',
         ]);
 
-        const executed = await executeMemberRoleChange('member_server_action_role_target', 'admin');
+        const executed = await executeMemberRoleChange(
+            'member_server_action_role_target',
+            'admin',
+            'test:member.change_role:server-action',
+        );
 
         expect(executed.ok).toBe(true);
 

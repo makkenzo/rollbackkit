@@ -2,11 +2,8 @@ import { createPostgresMigrationRunner } from '@rollbackkit/postgres';
 import { Client } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import {
-    executeProjectArchive,
-    previewProjectArchive,
-    undoDemoActionRun,
-} from '../../app/actions/project-archive';
+import { undoDemoActionRun } from '../../app/actions/action-runs';
+import { executeProjectArchive, previewProjectArchive } from '../../app/actions/project-archive';
 import { closeDemoPostgresPool } from '../../lib/server/demo-db';
 import { readDemoSql } from '../helpers/demo-sql';
 
@@ -97,7 +94,10 @@ WHERE id = $1
             'Previous project state will be saved for undo',
         ]);
 
-        const executed = await executeProjectArchive('project_server_action_archive_target');
+        const executed = await executeProjectArchive(
+            'project_server_action_archive_target',
+            'test:project.archive:server-action',
+        );
 
         expect(executed.ok).toBe(true);
 

@@ -1,20 +1,11 @@
 import 'server-only';
 
 import {
-    type ActionActor,
     type ActionRun,
     isRollbackKitError,
     type JsonObject,
     type JsonValue,
 } from '@rollbackkit/core';
-
-export const DEMO_TENANT_ID = 'workspace_acme';
-
-export const DEMO_ACTOR: ActionActor = {
-    id: 'member_ada',
-    type: 'user',
-    displayName: 'Ada Lovelace',
-};
 
 export type DemoActionResponse<TData> =
     | {
@@ -37,7 +28,7 @@ export interface DemoActionRunDto {
     readonly name: string;
     readonly status: string;
     readonly createdAt: string;
-    readonly actor: ActionActor;
+    readonly actor: ActionRun['actor'];
     readonly tenantId?: string;
     readonly target?: {
         readonly id: string;
@@ -49,7 +40,7 @@ export interface DemoActionRunDto {
     readonly undoExpiresAt?: string;
     readonly undoStartedAt?: string;
     readonly undoneAt?: string;
-    readonly undoneBy?: ActionActor;
+    readonly undoneBy?: ActionRun['actor'];
     readonly result?: JsonValue;
     readonly undoResult?: JsonValue;
     readonly error?: {

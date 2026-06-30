@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
 import { executeMemberRemove, previewMemberRemove } from '../actions/member-remove';
+import { createDemoIdempotencyKey } from './demo-idempotency-key';
 
 type DemoMemberRole = 'Owner' | 'Admin' | 'Viewer';
 
@@ -36,6 +37,7 @@ export function MemberRemoveControl({ memberId, memberName, role }: MemberRemove
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [preview, setPreview] = useState<PreviewState | null>(null);
     const [error, setError] = useState<ActionErrorState | null>(null);
+    const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
 
     const isOwner = role === 'Owner';
     const isBusy = isPending;
@@ -43,6 +45,7 @@ export function MemberRemoveControl({ memberId, memberName, role }: MemberRemove
     function openPreview() {
         setError(null);
         setPreview(null);
+        setIdempotencyKey(createDemoIdempotencyKey(`member.remove:${memberId}`));
         setIsDialogOpen(true);
 
         startTransition(async () => {
@@ -65,13 +68,19 @@ export function MemberRemoveControl({ memberId, memberName, role }: MemberRemove
         setIsDialogOpen(false);
         setPreview(null);
         setError(null);
+        setIdempotencyKey(null);
     }
 
     function removeMember() {
         setError(null);
 
         startTransition(async () => {
-            const response = await executeMemberRemove(memberId);
+            const requestId =
+                idempotencyKey ?? createDemoIdempotencyKey(`member.remove:${memberId}`);
+
+            setIdempotencyKey(requestId);
+
+            const response = await executeMemberRemove(memberId, requestId);
 
             if (!response.ok) {
                 setError(response.error);
@@ -80,6 +89,7 @@ export function MemberRemoveControl({ memberId, memberName, role }: MemberRemove
 
             setIsDialogOpen(false);
             setPreview(null);
+            setIdempotencyKey(null);
             router.refresh();
         });
     }

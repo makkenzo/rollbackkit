@@ -3,7 +3,7 @@ import { createPostgresMigrationRunner } from '@rollbackkit/postgres';
 import { Client } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getDemoActionHistory } from '../../lib/server/action-history-repository';
-import { PROJECT_ARCHIVE_ACTION_NAME } from '../../lib/server/actions/project-archive';
+import { PROJECT_ARCHIVE_ACTION_NAME } from '../../lib/server/actions/project-archive.action';
 import { closeDemoPostgresPool } from '../../lib/server/demo-db';
 import { createDemoRollbackKit } from '../../lib/server/rollbackkit';
 import { readDemoSql } from '../helpers/demo-sql';

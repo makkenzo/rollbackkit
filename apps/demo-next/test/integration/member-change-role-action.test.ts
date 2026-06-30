@@ -3,7 +3,7 @@ import { createPostgresMigrationRunner } from '@rollbackkit/postgres';
 import { Client } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { MEMBER_CHANGE_ROLE_ACTION_NAME } from '../../lib/server/actions/member-change-role';
+import { MEMBER_CHANGE_ROLE_ACTION_NAME } from '../../lib/server/actions/member-change-role.action';
 import { createDemoRollbackKit } from '../../lib/server/rollbackkit';
 import { readDemoSql } from '../helpers/demo-sql';
 

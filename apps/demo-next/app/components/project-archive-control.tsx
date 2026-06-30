@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
 import { executeProjectArchive, previewProjectArchive } from '../actions/project-archive';
+import { createDemoIdempotencyKey } from './demo-idempotency-key';
 
 interface ProjectArchiveControlProps {
     readonly projectId: string;
@@ -38,6 +39,7 @@ export function ProjectArchiveControl({
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [preview, setPreview] = useState<PreviewState | null>(null);
     const [error, setError] = useState<ActionErrorState | null>(null);
+    const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
 
     const isArchived = status === 'Archived';
     const isBusy = isPending;
@@ -45,6 +47,7 @@ export function ProjectArchiveControl({
     function openPreview() {
         setError(null);
         setPreview(null);
+        setIdempotencyKey(createDemoIdempotencyKey(`project.archive:${projectId}`));
         setIsDialogOpen(true);
 
         startTransition(async () => {
@@ -67,13 +70,19 @@ export function ProjectArchiveControl({
         setIsDialogOpen(false);
         setPreview(null);
         setError(null);
+        setIdempotencyKey(null);
     }
 
     function archiveProject() {
         setError(null);
 
         startTransition(async () => {
-            const response = await executeProjectArchive(projectId);
+            const requestId =
+                idempotencyKey ?? createDemoIdempotencyKey(`project.archive:${projectId}`);
+
+            setIdempotencyKey(requestId);
+
+            const response = await executeProjectArchive(projectId, requestId);
 
             if (!response.ok) {
                 setError(response.error);
@@ -82,6 +91,7 @@ export function ProjectArchiveControl({
 
             setIsDialogOpen(false);
             setPreview(null);
+            setIdempotencyKey(null);
             router.refresh();
         });
     }

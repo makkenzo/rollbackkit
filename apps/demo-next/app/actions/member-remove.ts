@@ -9,6 +9,6 @@ export async function previewMemberRemove(memberId: string) {
     return previewMemberRemoveService(memberId);
 }
 
-export async function executeMemberRemove(memberId: string) {
-    return executeMemberRemoveService(memberId);
+export async function executeMemberRemove(memberId: string, idempotencyKey: string) {
+    return executeMemberRemoveService(memberId, idempotencyKey);
 }
