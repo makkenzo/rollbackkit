@@ -1,12 +1,29 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { Client } from 'pg';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { closeDemoPostgresPool } from '../../lib/server/demo-db';
 import { getDemoDashboardData } from '../../lib/server/demo-repository';
+import { readDemoSql } from '../helpers/demo-sql';
 
 const databaseUrl = process.env.ROLLBACKKIT_DEMO_DATABASE_URL ?? process.env.DATABASE_URL;
 const describeIntegration = databaseUrl === undefined ? describe.skip : describe;
 
 describeIntegration('demo repository', () => {
+    beforeEach(async () => {
+        const client = new Client({
+            connectionString: databaseUrl,
+        });
+
+        await client.connect();
+
+        try {
+            await client.query(await readDemoSql('db/schema.sql'));
+            await client.query(await readDemoSql('db/seed.sql'));
+        } finally {
+            await client.end();
+        }
+    });
+
     afterAll(async () => {
         await closeDemoPostgresPool();
     });

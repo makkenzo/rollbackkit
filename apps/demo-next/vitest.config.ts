@@ -13,6 +13,7 @@ export default defineConfig({
     },
     test: {
         environment: 'node',
+        fileParallelism: false,
         include: ['test/**/*.test.ts'],
     },
 });
