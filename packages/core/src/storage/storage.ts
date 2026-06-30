@@ -13,9 +13,21 @@ export interface CreateActionRunInput<TInput extends JsonValue = JsonValue> {
     readonly target?: ActionTarget;
     readonly input: TInput;
     readonly inputHash?: string;
+    readonly idempotencyKey?: string;
     readonly reversibility: Reversibility;
     readonly undoExpiresAt?: Date;
     readonly metadata?: JsonObject;
+}
+
+export interface ClaimActionRunInput<TInput extends JsonValue = JsonValue>
+    extends CreateActionRunInput<TInput> {
+    readonly inputHash: string;
+    readonly idempotencyKey: string;
+}
+
+export interface ClaimActionRunResult<TInput extends JsonValue = JsonValue> {
+    readonly run: ActionRun<TInput>;
+    readonly created: boolean;
 }
 
 export interface UpdateActionRunInput<TResult extends JsonValue = JsonValue> {
@@ -81,6 +93,10 @@ export interface StorageAdapter {
     createActionRun<TInput extends JsonValue = JsonValue>(
         input: CreateActionRunInput<TInput>,
     ): Promise<ActionRun<TInput>>;
+
+    claimActionRun<TInput extends JsonValue = JsonValue>(
+        input: ClaimActionRunInput<TInput>,
+    ): Promise<ClaimActionRunResult<TInput>>;
 
     getActionRun(id: string): Promise<ActionRun | null>;
 

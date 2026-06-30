@@ -10,6 +10,8 @@ export type {
     ActionConflict,
     ActionHistoryQuery,
     ActionSideEffect,
+    ClaimActionRunInput,
+    ClaimActionRunResult,
     CreateActionRunInput,
     RecordConflictInput,
     RecordSideEffectInput,

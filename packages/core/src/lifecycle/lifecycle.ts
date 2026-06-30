@@ -28,6 +28,7 @@ export interface ActionRun<
     readonly target?: ActionTarget;
     readonly input: TInput;
     readonly inputHash?: string;
+    readonly idempotencyKey?: string;
     readonly reversibility: Reversibility;
     readonly createdAt: Date;
     readonly executedAt?: Date;

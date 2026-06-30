@@ -8,6 +8,8 @@ import type {
     ActionConflict,
     ActionHistoryQuery,
     ActionSideEffect,
+    ClaimActionRunInput,
+    ClaimActionRunResult,
     CreateActionRunInput,
     RecordConflictInput,
     RecordSideEffectInput,
@@ -51,6 +53,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
             ...(input.tenantId === undefined ? {} : { tenantId: input.tenantId }),
             ...(input.target === undefined ? {} : { target: input.target }),
             ...(input.inputHash === undefined ? {} : { inputHash: input.inputHash }),
+            ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
             ...(input.undoExpiresAt === undefined ? {} : { undoExpiresAt: input.undoExpiresAt }),
             ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
         };
@@ -58,6 +61,24 @@ export class MemoryStorageAdapter implements StorageAdapter {
         this.#actionRuns.set(run.id, run as ActionRun);
 
         return run;
+    }
+
+    async claimActionRun<TInput extends JsonValue = JsonValue>(
+        input: ClaimActionRunInput<TInput>,
+    ): Promise<ClaimActionRunResult<TInput>> {
+        const existing = this.#findClaimedActionRun(input);
+
+        if (existing !== null) {
+            return {
+                run: existing as ActionRun<TInput>,
+                created: false,
+            };
+        }
+
+        return {
+            run: await this.createActionRun(input),
+            created: true,
+        };
     }
 
     async getActionRun(id: string): Promise<ActionRun | null> {
@@ -254,6 +275,22 @@ export class MemoryStorageAdapter implements StorageAdapter {
         }
 
         return run;
+    }
+
+    #findClaimedActionRun(input: ClaimActionRunInput): ActionRun | null {
+        for (const run of this.#actionRuns.values()) {
+            if (
+                run.name === input.name &&
+                run.actor.id === input.actor.id &&
+                run.actor.type === input.actor.type &&
+                run.tenantId === input.tenantId &&
+                run.idempotencyKey === input.idempotencyKey
+            ) {
+                return run;
+            }
+        }
+
+        return null;
     }
 
     #createId(kind: string): string {

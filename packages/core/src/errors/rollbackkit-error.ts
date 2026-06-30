@@ -11,6 +11,7 @@ export type RollbackKitErrorCode =
     | 'ACTION_ALREADY_UNDONE'
     | 'ACTION_UNDO_EXPIRED'
     | 'ACTION_CONFLICT'
+    | 'IDEMPOTENCY_CONFLICT'
     | 'SNAPSHOT_NOT_FOUND'
     | 'STORAGE_ERROR';
 

@@ -1,26 +1,33 @@
-import type {
-    ActionDefinition,
-    AuthorizationContext,
-    BaseActionContext,
-    PermissionDecision,
-} from '../action/definition';
+import type { ActionDefinition } from '../action/definition';
 import {
     type ActionRegistry,
     createActionRegistry,
     type RegisteredActionDefinition,
 } from '../action/registry';
-import { isRollbackKitError, RollbackKitError } from '../errors/rollbackkit-error';
+import { RollbackKitError } from '../errors/rollbackkit-error';
 import type { ActionActor } from '../identity/actor';
 import type { ActionTarget } from '../identity/target';
-import type { ActionPhase, ActionRun } from '../lifecycle/lifecycle';
+import type { ActionRun } from '../lifecycle/lifecycle';
 import type { PreviewResult } from '../lifecycle/preview';
-import { isUndoable, type Reversibility } from '../lifecycle/reversibility';
-import { isJsonValue, type JsonObject, type JsonValue } from '../shared/json';
+import type { JsonObject, JsonValue } from '../shared/json';
 import type { Clock } from '../shared/time';
 import { systemClock } from '../shared/time';
 import { createMemoryStorageAdapter } from '../storage/memory-storage';
-import type { Snapshot, SnapshotReader, SnapshotRecorder } from '../storage/snapshot';
 import type { StorageAdapter } from '../storage/storage';
+import { parseActionInput } from './action-input';
+import { resolveActionTarget } from './action-target';
+import { authorizeAction } from './authorization';
+import { createBaseActionContext, createBaseActionContextFromRun } from './contexts';
+import { assertIdempotentInputMatches, createActionInputFingerprint } from './idempotency';
+import { applyDefaultUndoWindow, createUndoExpiration, mergeMetadata } from './lifecycle-helpers';
+import {
+    assertActionRunCanBeUndone,
+    createActionNotUndoableError,
+    createActionRunNotFoundError,
+    normalizeExecutionError,
+    normalizeUndoError,
+} from './runtime-errors';
+import { BoundSnapshotReader, BoundSnapshotRecorder } from './snapshot-bindings';
 
 export interface RollbackKitOptions {
     readonly registry?: ActionRegistry;
@@ -47,6 +54,7 @@ export interface PreviewActionRequest {
 export interface ExecuteActionRequest {
     readonly name: string;
     readonly input?: unknown;
+    readonly idempotencyKey?: string;
     readonly actor: ActionActor;
     readonly tenantId?: string;
     readonly target?: ActionTarget;
@@ -113,6 +121,7 @@ export class RollbackKit {
     async execute(request: ExecuteActionRequest): Promise<ActionRun> {
         const action = this.registry.require(request.name);
         const input = await parseActionInput(action, request.input);
+        const inputFingerprint = createActionInputFingerprint(input);
 
         const initialContext = createBaseActionContext({
             actionName: action.name,
@@ -137,16 +146,54 @@ export class RollbackKit {
             phase: 'execute',
         });
 
-        const run = await this.storage.createActionRun({
+        const idempotencyKey = request.idempotencyKey;
+        const createInput = {
             name: action.name,
             actor: request.actor,
             input,
+            inputHash: inputFingerprint.inputHash,
             reversibility: action.reversibility,
             ...(request.tenantId === undefined ? {} : { tenantId: request.tenantId }),
             ...(target === undefined ? {} : { target }),
+            ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
             ...(request.metadata === undefined ? {} : { metadata: request.metadata }),
             ...createUndoExpiration(action.reversibility, action.undoWindowMs, this.#clock.now()),
-        });
+        };
+
+        const actionRunClaim =
+            idempotencyKey === undefined
+                ? {
+                      run: await this.storage.createActionRun(createInput),
+                      created: true,
+                  }
+                : await this.storage.claimActionRun({
+                      ...createInput,
+                      idempotencyKey,
+                  });
+
+        const run = actionRunClaim.run;
+
+        if (!actionRunClaim.created) {
+            if (idempotencyKey === undefined) {
+                throw new RollbackKitError({
+                    code: 'STORAGE_ERROR',
+                    message: 'Storage returned an existing action run without an idempotency key.',
+                    details: {
+                        actionName: action.name,
+                        actionRunId: run.id,
+                    },
+                });
+            }
+
+            assertIdempotentInputMatches(run, {
+                actionName: action.name,
+                idempotencyKey,
+                canonicalInput: inputFingerprint.canonicalInput,
+                inputHash: inputFingerprint.inputHash,
+            });
+
+            return run;
+        }
 
         const runningRun = await this.storage.updateActionRun(run.id, {
             status: 'running',
@@ -251,333 +298,4 @@ export class RollbackKit {
 
 export function createRollbackKit(options?: RollbackKitOptions): RollbackKit {
     return new RollbackKit(options);
-}
-
-interface CreateBaseActionContextInput {
-    readonly actionName: string;
-    readonly input: JsonValue;
-    readonly request: PreviewActionRequest | ExecuteActionRequest;
-    readonly target?: ActionTarget;
-    readonly clock: Clock;
-}
-
-interface CreateBaseActionContextFromRunInput {
-    readonly actionName: string;
-    readonly run: ActionRun;
-    readonly actor: ActionActor;
-    readonly metadata?: JsonObject;
-    readonly clock: Clock;
-}
-
-class BoundSnapshotRecorder implements SnapshotRecorder {
-    readonly #storage: StorageAdapter;
-    readonly #actionRunId: string;
-
-    constructor(storage: StorageAdapter, actionRunId: string) {
-        this.#storage = storage;
-        this.#actionRunId = actionRunId;
-    }
-
-    async save<TValue extends JsonValue>(
-        key: string,
-        value: TValue,
-        metadata?: JsonObject,
-    ): Promise<Snapshot<TValue>> {
-        return this.#storage.saveSnapshot({
-            actionRunId: this.#actionRunId,
-            key,
-            value,
-            ...(metadata === undefined ? {} : { metadata }),
-        });
-    }
-}
-
-class BoundSnapshotReader implements SnapshotReader {
-    readonly #storage: StorageAdapter;
-    readonly #actionRunId: string;
-
-    constructor(storage: StorageAdapter, actionRunId: string) {
-        this.#storage = storage;
-        this.#actionRunId = actionRunId;
-    }
-
-    async get<TValue extends JsonValue = JsonValue>(key: string): Promise<Snapshot<TValue> | null> {
-        const snapshots = await this.#storage.getSnapshots(this.#actionRunId);
-        const snapshot = [...snapshots].reverse().find((item) => item.key === key);
-
-        return snapshot === undefined ? null : (snapshot as Snapshot<TValue>);
-    }
-
-    async list(): Promise<readonly Snapshot[]> {
-        return this.#storage.getSnapshots(this.#actionRunId);
-    }
-}
-
-function createBaseActionContext(
-    input: CreateBaseActionContextInput,
-): BaseActionContext<JsonValue> {
-    return {
-        actionName: input.actionName,
-        input: input.input,
-        actor: input.request.actor,
-        clock: input.clock,
-        ...(input.request.tenantId === undefined ? {} : { tenantId: input.request.tenantId }),
-        ...(input.target === undefined ? {} : { target: input.target }),
-        ...(input.request.metadata === undefined ? {} : { metadata: input.request.metadata }),
-    };
-}
-
-function createBaseActionContextFromRun(
-    input: CreateBaseActionContextFromRunInput,
-): BaseActionContext<JsonValue> {
-    return {
-        actionName: input.actionName,
-        input: input.run.input,
-        actor: input.actor,
-        clock: input.clock,
-        ...(input.run.tenantId === undefined ? {} : { tenantId: input.run.tenantId }),
-        ...(input.run.target === undefined ? {} : { target: input.run.target }),
-        ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
-    };
-}
-
-async function parseActionInput(
-    action: ActionDefinition<JsonValue, JsonValue, JsonValue>,
-    rawInput: unknown,
-): Promise<JsonValue> {
-    const candidateInput = action.input === undefined && rawInput === undefined ? {} : rawInput;
-
-    try {
-        const parsed =
-            action.input === undefined ? candidateInput : await action.input.parse(candidateInput);
-
-        if (!isJsonValue(parsed)) {
-            throw new RollbackKitError({
-                code: 'ACTION_INPUT_INVALID',
-                message: `Action "${action.name}" input must be JSON-serializable.`,
-                details: {
-                    actionName: action.name,
-                },
-            });
-        }
-
-        return parsed;
-    } catch (error) {
-        if (isRollbackKitError(error)) {
-            throw error;
-        }
-
-        throw new RollbackKitError({
-            code: 'ACTION_INPUT_INVALID',
-            message: `Action "${action.name}" input is invalid.`,
-            details: {
-                actionName: action.name,
-            },
-            cause: error,
-        });
-    }
-}
-
-async function resolveActionTarget(
-    action: ActionDefinition<JsonValue, JsonValue, JsonValue>,
-    context: BaseActionContext<JsonValue>,
-): Promise<ActionTarget | undefined> {
-    if (action.resolveTarget === undefined) {
-        return context.target;
-    }
-
-    const target = await action.resolveTarget(context);
-
-    return target ?? undefined;
-}
-
-async function authorizeAction(
-    action: ActionDefinition<JsonValue, JsonValue, JsonValue>,
-    context: AuthorizationContext<JsonValue>,
-): Promise<void> {
-    if (action.authorize === undefined) {
-        return;
-    }
-
-    const decision = await action.authorize(context);
-
-    if (isPermissionAllowed(decision)) {
-        return;
-    }
-
-    throw new RollbackKitError({
-        code: 'ACTION_PERMISSION_DENIED',
-        message: createPermissionDeniedMessage(action.name, context.phase, decision),
-        details: createPermissionDeniedDetails(action.name, context.phase, decision),
-    });
-}
-
-function isPermissionAllowed(decision: PermissionDecision): boolean {
-    return typeof decision === 'boolean' ? decision : decision.allowed;
-}
-
-function createPermissionDeniedMessage(
-    actionName: string,
-    phase: ActionPhase,
-    decision: PermissionDecision,
-): string {
-    const reason = typeof decision === 'boolean' ? undefined : decision.reason;
-
-    if (reason === undefined) {
-        return `Action "${actionName}" permission denied during ${phase}.`;
-    }
-
-    return `Action "${actionName}" permission denied during ${phase}: ${reason}`;
-}
-
-function createPermissionDeniedDetails(
-    actionName: string,
-    phase: ActionPhase,
-    decision: PermissionDecision,
-): JsonObject {
-    if (typeof decision === 'boolean') {
-        return {
-            actionName,
-            phase,
-        };
-    }
-
-    return {
-        actionName,
-        phase,
-        ...(decision.reason === undefined ? {} : { reason: decision.reason }),
-        ...(decision.metadata === undefined ? {} : { metadata: decision.metadata }),
-    };
-}
-
-function applyDefaultUndoWindow(preview: PreviewResult, undoWindowMs?: number): PreviewResult {
-    if (preview.undoWindowMs !== undefined || undoWindowMs === undefined) {
-        return preview;
-    }
-
-    return {
-        ...preview,
-        undoWindowMs,
-    };
-}
-
-function createUndoExpiration(
-    reversibility: Reversibility,
-    undoWindowMs: number | undefined,
-    now: Date,
-): { readonly undoExpiresAt?: Date } {
-    if (!reversibility.undoable || undoWindowMs === undefined) {
-        return {};
-    }
-
-    return {
-        undoExpiresAt: new Date(now.getTime() + undoWindowMs),
-    };
-}
-
-function mergeMetadata(
-    existing: JsonObject | undefined,
-    next: JsonObject | undefined,
-): JsonObject | undefined {
-    if (existing === undefined) {
-        return next;
-    }
-
-    if (next === undefined) {
-        return existing;
-    }
-
-    return {
-        ...existing,
-        ...next,
-    };
-}
-
-function normalizeExecutionError(actionName: string, error: unknown): RollbackKitError {
-    if (isRollbackKitError(error)) {
-        return error;
-    }
-
-    return new RollbackKitError({
-        code: 'ACTION_EXECUTION_FAILED',
-        message: `Action "${actionName}" execution failed.`,
-        details: {
-            actionName,
-        },
-        cause: error,
-    });
-}
-
-function assertActionRunCanBeUndone(run: ActionRun, now: Date): void {
-    if (run.status === 'undone') {
-        throw new RollbackKitError({
-            code: 'ACTION_ALREADY_UNDONE',
-            message: `Action run "${run.id}" has already been undone.`,
-            details: {
-                actionRunId: run.id,
-                actionName: run.name,
-            },
-        });
-    }
-
-    if (run.status !== 'completed') {
-        throw createActionNotUndoableError(
-            run,
-            `Action run status is "${run.status}". Only completed action runs can be undone.`,
-        );
-    }
-
-    if (!isUndoable(run.reversibility)) {
-        throw createActionNotUndoableError(run, 'Action run reversibility is not undoable.');
-    }
-
-    if (run.undoExpiresAt !== undefined && run.undoExpiresAt.getTime() <= now.getTime()) {
-        throw new RollbackKitError({
-            code: 'ACTION_UNDO_EXPIRED',
-            message: `Action run "${run.id}" undo window has expired.`,
-            details: {
-                actionRunId: run.id,
-                actionName: run.name,
-                undoExpiresAt: run.undoExpiresAt.toISOString(),
-            },
-        });
-    }
-}
-
-function createActionRunNotFoundError(actionRunId: string): RollbackKitError {
-    return new RollbackKitError({
-        code: 'ACTION_NOT_FOUND',
-        message: `Action run "${actionRunId}" was not found.`,
-        details: {
-            actionRunId,
-        },
-    });
-}
-
-function createActionNotUndoableError(run: ActionRun, reason: string): RollbackKitError {
-    return new RollbackKitError({
-        code: 'ACTION_NOT_UNDOABLE',
-        message: `Action run "${run.id}" cannot be undone: ${reason}`,
-        details: {
-            actionRunId: run.id,
-            actionName: run.name,
-            status: run.status,
-            reason,
-        },
-    });
-}
-
-function normalizeUndoError(actionName: string, error: unknown): RollbackKitError {
-    if (isRollbackKitError(error)) {
-        return error;
-    }
-
-    return new RollbackKitError({
-        code: 'ACTION_UNDO_FAILED',
-        message: `Action "${actionName}" undo failed.`,
-        details: {
-            actionName,
-        },
-        cause: error,
-    });
 }
