@@ -166,7 +166,9 @@ user request
   -> return result
 ```
 
-Execute should be idempotent when an idempotency key is provided.
+Execute is idempotent when an idempotency key is provided. The idempotency scope
+is action name, actor type/id, tenant and key; reusing the same key with
+different input is rejected.
 
 ### Undo flow
 

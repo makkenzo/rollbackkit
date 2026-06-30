@@ -49,7 +49,9 @@ Execute should:
 - store the result;
 - mark the action as completed or failed.
 
-Execute should be idempotent when an idempotency key is provided.
+Execute is idempotent when an idempotency key is provided. A retry with the same
+action, actor, tenant, key and input returns the existing action run. Reusing the
+same key with different input is rejected as an idempotency conflict.
 
 ### 3. Audit
 

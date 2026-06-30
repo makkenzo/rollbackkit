@@ -79,14 +79,15 @@ pnpm --filter @rollbackkit/cli exec node dist/bin.mjs migrate
 If migrations are pending, the CLI prints the applied migration list:
 
 ```text
-Applied 1 RollbackKit PostgreSQL migration(s):
+Applied 2 RollbackKit PostgreSQL migration(s):
 - 0001_initial_schema: Create RollbackKit action run, snapshot, side effect and conflict tables.
+- 0002_action_run_idempotency: Add scoped idempotency keys for RollbackKit action runs.
 ```
 
 If the schema is already up to date, it prints:
 
 ```text
-RollbackKit PostgreSQL schema is up to date. 1 migration(s) already applied.
+RollbackKit PostgreSQL schema is up to date. 2 migration(s) already applied.
 ```
 
 ## Checking database status
@@ -116,8 +117,9 @@ Example output before migrations:
 RollbackKit PostgreSQL doctor
 Database: connected
 Applied migrations: 0
-Schema: 1 pending migration(s)
+Schema: 2 pending migration(s)
 - 0001_initial_schema: Create RollbackKit action run, snapshot, side effect and conflict tables.
+- 0002_action_run_idempotency: Add scoped idempotency keys for RollbackKit action runs.
 ```
 
 Example output after migrations:
@@ -125,7 +127,7 @@ Example output after migrations:
 ```text
 RollbackKit PostgreSQL doctor
 Database: connected
-Applied migrations: 1
+Applied migrations: 2
 Schema: up to date
 ```
 
@@ -360,4 +362,3 @@ rollbackkit doctor
 Make sure `createPostgresStore()` receives a single-connection executor.
 
 Use `pg.Client` or `pg.PoolClient`, not a bare `pg.Pool`, for flows that depend on transaction-safe undo.
-
