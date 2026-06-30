@@ -1,18 +1,12 @@
-import {
-    createPostgresMigrationRunner,
-    type PostgresQueryExecutor,
-    ROLLBACKKIT_POSTGRES_MIGRATIONS,
-} from '@rollbackkit/postgres';
+import { createPostgresMigrationRunner, type PostgresQueryExecutor } from '@rollbackkit/postgres';
 import { Command } from 'commander';
 import { Client } from 'pg';
+import { resolveDatabaseUrl } from './database-url';
+import type { CliWriter } from './output';
+import { writeLine } from './output';
 
 export const rollbackkitCliVersion = '0.0.0';
-
-const DATABASE_URL_ENV_NAMES = ['ROLLBACKKIT_DATABASE_URL', 'DATABASE_URL'] as const;
-
-export interface CliWriter {
-    write(text: string): unknown;
-}
+export type { CliWriter } from './output';
 
 export interface RollbackKitCliPostgresClient extends PostgresQueryExecutor {
     connect(): Promise<unknown>;
@@ -91,24 +85,20 @@ export function createRollbackKitCliProgram(options: RollbackKitCliProgramOption
                     executor: client,
                 });
 
-                const appliedMigrations = await runner.getAppliedMigrations();
-                const appliedIds = new Set(appliedMigrations.map((migration) => migration.id));
-                const pendingMigrations = ROLLBACKKIT_POSTGRES_MIGRATIONS.filter(
-                    (migration) => !appliedIds.has(migration.id),
-                );
+                const status = await runner.getMigrationStatus();
 
                 writeLine(stdout, 'RollbackKit PostgreSQL doctor');
                 writeLine(stdout, 'Database: connected');
-                writeLine(stdout, `Applied migrations: ${appliedMigrations.length}`);
+                writeLine(stdout, `Applied migrations: ${status.applied.length}`);
 
-                if (pendingMigrations.length === 0) {
+                if (status.pending.length === 0) {
                     writeLine(stdout, 'Schema: up to date');
                     return;
                 }
 
-                writeLine(stdout, `Schema: ${pendingMigrations.length} pending migration(s)`);
+                writeLine(stdout, `Schema: ${status.pending.length} pending migration(s)`);
 
-                for (const migration of pendingMigrations) {
+                for (const migration of status.pending) {
                     writeLine(stdout, `- ${migration.id}: ${migration.description}`);
                 }
             });
@@ -145,29 +135,4 @@ async function withPostgresClient<TValue>(
     } finally {
         await client.end();
     }
-}
-
-function resolveDatabaseUrl(
-    databaseUrl: string | undefined,
-    env: Record<string, string | undefined>,
-): string {
-    const resolvedDatabaseUrl =
-        databaseUrl ??
-        DATABASE_URL_ENV_NAMES.map((name) => env[name]).find(
-            (value): value is string => value !== undefined && value.trim() !== '',
-        );
-
-    if (resolvedDatabaseUrl === undefined || resolvedDatabaseUrl.trim() === '') {
-        throw new Error(
-            `Missing PostgreSQL database URL. Pass --database-url or set ${DATABASE_URL_ENV_NAMES.join(
-                ' / ',
-            )}.`,
-        );
-    }
-
-    return resolvedDatabaseUrl;
-}
-
-function writeLine(writer: CliWriter, text: string): void {
-    writer.write(`${text}\n`);
 }

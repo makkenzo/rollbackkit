@@ -32,9 +32,15 @@ class FakePostgresClient implements RollbackKitCliPostgresClient {
 
     connected = false;
     ended = false;
+    schemaMigrationsTableExists: boolean;
 
-    constructor(appliedRows: readonly FakeAppliedMigrationRow[] = []) {
+    constructor(
+        appliedRows: readonly FakeAppliedMigrationRow[] = [],
+        options: { readonly schemaMigrationsTableExists?: boolean } = {},
+    ) {
         this.appliedRows = [...appliedRows];
+        this.schemaMigrationsTableExists =
+            options.schemaMigrationsTableExists ?? appliedRows.length > 0;
     }
 
     async connect(): Promise<void> {
@@ -50,6 +56,22 @@ class FakePostgresClient implements RollbackKitCliPostgresClient {
         values?: unknown[],
     ): Promise<QueryResult<TResult>> {
         this.queries.push(values === undefined ? { text } : { text, values });
+
+        if (text.includes("to_regclass('rollbackkit_schema_migrations')")) {
+            return createQueryResult([
+                {
+                    table_name: this.schemaMigrationsTableExists
+                        ? 'rollbackkit_schema_migrations'
+                        : null,
+                },
+            ] as unknown as TResult[]);
+        }
+
+        if (text.includes('CREATE TABLE IF NOT EXISTS rollbackkit_schema_migrations')) {
+            this.schemaMigrationsTableExists = true;
+
+            return createQueryResult([]);
+        }
 
         if (text.includes('SELECT id, applied_at')) {
             return createQueryResult(this.appliedRows as unknown as TResult[]);
@@ -94,8 +116,9 @@ describe('@rollbackkit/cli', () => {
 
         expect(client.connected).toBe(true);
         expect(client.ended).toBe(true);
-        expect(stdout.output).toContain('Applied 1 RollbackKit PostgreSQL migration(s):');
+        expect(stdout.output).toContain('Applied 2 RollbackKit PostgreSQL migration(s):');
         expect(stdout.output).toContain('- 0001_initial_schema:');
+        expect(stdout.output).toContain('- 0002_action_run_idempotency:');
 
         expect(client.queries.some((query) => query.text.trim() === 'BEGIN')).toBe(true);
         expect(client.queries.some((query) => query.text.trim() === 'COMMIT')).toBe(true);
@@ -107,6 +130,10 @@ describe('@rollbackkit/cli', () => {
             {
                 id: '0001_initial_schema',
                 applied_at: new Date('2026-01-01T00:00:00.000Z'),
+            },
+            {
+                id: '0002_action_run_idempotency',
+                applied_at: new Date('2026-01-01T00:00:01.000Z'),
             },
         ]);
 
@@ -147,8 +174,14 @@ describe('@rollbackkit/cli', () => {
         expect(client.ended).toBe(true);
         expect(stdout.output).toContain('RollbackKit PostgreSQL doctor');
         expect(stdout.output).toContain('Database: connected');
-        expect(stdout.output).toContain('Schema: 1 pending migration(s)');
+        expect(stdout.output).toContain('Schema: 2 pending migration(s)');
         expect(stdout.output).toContain('- 0001_initial_schema:');
+        expect(stdout.output).toContain('- 0002_action_run_idempotency:');
+        expect(
+            client.queries.some((query) =>
+                query.text.includes('CREATE TABLE IF NOT EXISTS rollbackkit_schema_migrations'),
+            ),
+        ).toBe(false);
     });
 
     it('reads database url from environment', async () => {

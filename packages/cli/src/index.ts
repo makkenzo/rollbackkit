@@ -1,5 +1,5 @@
+export type { CliWriter } from './output';
 export {
-    type CliWriter,
     createRollbackKitCliProgram,
     type RollbackKitCliPostgresClient,
     type RollbackKitCliProgramOptions,
