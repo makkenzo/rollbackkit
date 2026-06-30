@@ -3,6 +3,7 @@ import { createPostgresMigrationRunner } from '@rollbackkit/postgres';
 import { Client } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getDemoActionHistory } from '../../lib/server/action-history-repository';
+import { MEMBER_REMOVE_ACTION_NAME } from '../../lib/server/actions/member-remove.action';
 import { PROJECT_ARCHIVE_ACTION_NAME } from '../../lib/server/actions/project-archive.action';
 import { closeDemoPostgresPool } from '../../lib/server/demo-db';
 import { createDemoRollbackKit } from '../../lib/server/rollbackkit';
@@ -99,6 +100,81 @@ describeIntegration('action history repository', () => {
             'Hidden Action History Target',
         );
     });
+
+    it('loads member remove history before and after undo', async () => {
+        const currentClient = requireClient();
+        const rollbackkit = createDemoRollbackKit(currentClient);
+
+        await seedActionHistoryMemberRemoval(currentClient);
+
+        const run = await rollbackkit.execute({
+            name: MEMBER_REMOVE_ACTION_NAME,
+            actor,
+            tenantId: 'workspace_acme',
+            input: {
+                memberId: 'member_action_history_remove_target',
+            },
+        });
+
+        const completedHistory = await getDemoActionHistory();
+
+        expect(completedHistory[0]).toMatchObject({
+            id: run.id,
+            actionName: MEMBER_REMOVE_ACTION_NAME,
+            targetLabel: 'Action History Remove Target',
+            actorLabel: 'Ada Lovelace',
+            statusLabel: 'Undo available',
+            statusTone: 'warning',
+            canUndo: true,
+        });
+        expect(completedHistory[0]?.undoExpiresAt).toBeDefined();
+
+        await rollbackkit.undo({
+            actionRunId: run.id,
+            actor,
+        });
+
+        const undoneHistory = await getDemoActionHistory();
+
+        expect(undoneHistory[0]).toMatchObject({
+            id: run.id,
+            actionName: MEMBER_REMOVE_ACTION_NAME,
+            targetLabel: 'Action History Remove Target',
+            actorLabel: 'Ada Lovelace',
+            statusLabel: 'Undone',
+            statusTone: 'neutral',
+            canUndo: false,
+        });
+    });
+
+    it('loads failed member remove history', async () => {
+        const currentClient = requireClient();
+        const rollbackkit = createDemoRollbackKit(currentClient);
+
+        await expect(
+            rollbackkit.execute({
+                name: MEMBER_REMOVE_ACTION_NAME,
+                actor,
+                tenantId: 'workspace_acme',
+                input: {
+                    memberId: 'member_ada',
+                },
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_CONFLICT',
+        });
+
+        const history = await getDemoActionHistory();
+
+        expect(history[0]).toMatchObject({
+            actionName: MEMBER_REMOVE_ACTION_NAME,
+            targetLabel: 'Ada Lovelace',
+            actorLabel: 'Ada Lovelace',
+            statusLabel: 'Failed',
+            statusTone: 'danger',
+            canUndo: false,
+        });
+    });
 });
 
 function requireClient(): Client {
@@ -157,6 +233,55 @@ VALUES (
     'workspace_action_test',
     'Hidden Action History Target',
     'member_action_test',
+    'active',
+    NULL,
+    '2026-01-01T00:20:00.000Z',
+    '2026-01-01T00:10:00.000Z'
+)
+ON CONFLICT (id) DO UPDATE
+SET
+    workspace_id = EXCLUDED.workspace_id,
+    name = EXCLUDED.name,
+    owner_member_id = EXCLUDED.owner_member_id,
+    status = EXCLUDED.status,
+    archived_at = EXCLUDED.archived_at,
+    updated_at = EXCLUDED.updated_at,
+    created_at = EXCLUDED.created_at;
+`);
+}
+
+async function seedActionHistoryMemberRemoval(executor: Client): Promise<void> {
+    await executor.query(`
+INSERT INTO demo_members (id, workspace_id, name, email, role)
+VALUES (
+    'member_action_history_remove_target',
+    'workspace_acme',
+    'Action History Remove Target',
+    'action-history-remove-target@example.com',
+    'admin'
+)
+ON CONFLICT (id) DO UPDATE
+SET
+    workspace_id = EXCLUDED.workspace_id,
+    name = EXCLUDED.name,
+    email = EXCLUDED.email,
+    role = EXCLUDED.role;
+
+INSERT INTO demo_projects (
+    id,
+    workspace_id,
+    name,
+    owner_member_id,
+    status,
+    archived_at,
+    updated_at,
+    created_at
+)
+VALUES (
+    'project_action_history_member_remove_owned',
+    'workspace_acme',
+    'Action History Member Remove Owned Project',
+    'member_action_history_remove_target',
     'active',
     NULL,
     '2026-01-01T00:20:00.000Z',
