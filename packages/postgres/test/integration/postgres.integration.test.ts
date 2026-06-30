@@ -9,8 +9,8 @@ import {
 import { Client } from 'pg';
 import { describe, expect, it } from 'vitest';
 
-import { createPostgresMigrationRunner } from './migration-runner';
-import { createPostgresStore } from './store';
+import { createPostgresMigrationRunner } from '../../src/migration-runner';
+import { createPostgresStore } from '../../src/store';
 
 const DATABASE_URL = process.env.ROLLBACKKIT_POSTGRES_TEST_DATABASE_URL;
 const describeIntegration = DATABASE_URL === undefined ? describe.skip : describe;

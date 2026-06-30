@@ -7,7 +7,7 @@ import {
     ROLLBACKKIT_POSTGRES_MIGRATIONS,
     RollbackKitPostgresMigrationError,
     rollbackkitPostgresVersion,
-} from './index';
+} from '../../src/index';
 
 interface RecordedQuery {
     readonly text: string;

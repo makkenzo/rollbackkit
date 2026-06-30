@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createRollbackKitPostgresId } from './id';
+import { createRollbackKitPostgresId } from '../../src/id';
 
 describe('PostgreSQL id generation', () => {
     it('creates stable prefixed ids', () => {

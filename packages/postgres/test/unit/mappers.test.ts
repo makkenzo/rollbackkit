@@ -15,7 +15,7 @@ import {
     mapActionSideEffectRow,
     mapSnapshotRow,
     type SnapshotRow,
-} from './mappers';
+} from '../../src/mappers';
 
 const actor: ActionActor = {
     id: 'user_1',

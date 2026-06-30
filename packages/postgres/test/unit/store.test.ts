@@ -13,9 +13,14 @@ import {
 } from '@rollbackkit/core';
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
-import type { ActionConflictRow, ActionRunRow, ActionSideEffectRow, SnapshotRow } from './mappers';
-import type { PostgresQueryExecutor } from './migration-runner';
-import { createPostgresStore } from './store';
+import type {
+    ActionConflictRow,
+    ActionRunRow,
+    ActionSideEffectRow,
+    SnapshotRow,
+} from '../../src/mappers';
+import type { PostgresQueryExecutor } from '../../src/migration-runner';
+import { createPostgresStore } from '../../src/store';
 
 interface RecordedQuery {
     readonly text: string;
