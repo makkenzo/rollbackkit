@@ -80,6 +80,9 @@ importers:
       next:
         specifier: 'catalog:'
         version: 16.2.9(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      pg:
+        specifier: 'catalog:'
+        version: 8.22.0
       react:
         specifier: 'catalog:'
         version: 19.2.7
@@ -90,6 +93,9 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 26.0.1
+      '@types/pg':
+        specifier: 'catalog:'
+        version: 8.20.0
       '@types/react':
         specifier: 'catalog:'
         version: 19.2.17
