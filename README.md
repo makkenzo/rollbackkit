@@ -4,6 +4,8 @@ RollbackKit is an open-source TypeScript framework for building reversible produ
 
 It is Ctrl+Z for dangerous SaaS and internal-tool actions: preview the impact, execute safely, keep an audit trail, and undo when the action is explicitly modeled as reversible.
 
+Stop building destructive SaaS actions as one-off mutations. Define them as previewable, auditable and reversible product actions.
+
 > Status: early v0 draft. The core lifecycle, PostgreSQL adapter, CLI and demo app are in active development. Public APIs may change before the first stable release.
 
 ## Why
@@ -70,6 +72,55 @@ RollbackKit currently targets Node.js 22 or newer and ESM projects.
 3. Execute the action through `createRollbackKit`.
 4. Save snapshots from the execute handler when undo needs previous state.
 5. Provide an undo handler for actions that are truly reversible.
+
+## Example
+
+Instead of wiring a destructive handler directly to a button:
+
+```ts
+await archiveProject(projectId);
+```
+
+model it as a product action:
+
+```ts
+const preview = await rollbackkit.preview({
+    name: 'project.archive',
+    actor,
+    input: { projectId },
+});
+
+const run = await rollbackkit.execute({
+    name: 'project.archive',
+    actor,
+    input: { projectId },
+    idempotencyKey: requestId,
+});
+
+await rollbackkit.undo({
+    actionRunId: run.id,
+    actor,
+});
+```
+
+The action definition owns the safety contract: what preview shows, what execute mutates, what
+snapshot is stored, when undo expires, and when undo must be refused.
+
+## Product Flow
+
+```text
+Preview
+  -> show impact, warnings and reversibility before mutation
+
+Execute
+  -> mutate product state, save snapshots, record side effects
+
+Audit
+  -> keep a durable action history with actor, target, status and result
+
+Undo
+  -> restore state only when the modeled undo path is still safe
+```
 
 ## Action Shape
 
@@ -176,6 +227,14 @@ The demo currently covers:
 - undo.
 
 Planned demo scenarios include document archive, customer import rollback, conflict handling and irreversible side-effect warnings.
+
+## Docs
+
+- [Introduction](./apps/docs/INTRODUCTION.md)
+- [Why rollback-first](./apps/docs/WHY_ROLLBACK_FIRST.md)
+- [Getting started](./apps/docs/GETTING_STARTED.md)
+- [PostgreSQL setup](./apps/docs/POSTGRESQL_SETUP.md)
+- [Demo app](./apps/docs/DEMO_APP.md)
 
 ## PostgreSQL Migrations
 
