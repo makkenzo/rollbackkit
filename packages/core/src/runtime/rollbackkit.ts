@@ -9,11 +9,13 @@ import type { ActionActor } from '../identity/actor';
 import type { ActionTarget } from '../identity/target';
 import type { ActionRun } from '../lifecycle/lifecycle';
 import type { PreviewResult } from '../lifecycle/preview';
+import { isUndoable } from '../lifecycle/reversibility';
 import type { JsonObject, JsonValue } from '../shared/json';
 import type { Clock } from '../shared/time';
 import { systemClock } from '../shared/time';
 import { createMemoryStorageAdapter } from '../storage/memory-storage';
-import type { StorageAdapter } from '../storage/storage';
+import type { Snapshot } from '../storage/snapshot';
+import type { ActionHistoryQuery, StorageAdapter } from '../storage/storage';
 import { parseActionInput } from './action-input';
 import { resolveActionTarget } from './action-target';
 import { authorizeAction } from './authorization';
@@ -22,12 +24,18 @@ import { assertIdempotentInputMatches, createActionInputFingerprint } from './id
 import { applyDefaultUndoWindow, createUndoExpiration, mergeMetadata } from './lifecycle-helpers';
 import {
     assertActionRunCanBeUndone,
+    createActionDefinitionNotUndoableError,
     createActionNotUndoableError,
     createActionRunNotFoundError,
     normalizeExecutionError,
     normalizeUndoError,
 } from './runtime-errors';
-import { BoundSnapshotReader, BoundSnapshotRecorder } from './snapshot-bindings';
+import {
+    BoundSideEffectRecorder,
+    BoundSnapshotReader,
+    BoundSnapshotRecorder,
+    DeferredConflictRecorder,
+} from './snapshot-bindings';
 
 export interface RollbackKitOptions {
     readonly registry?: ActionRegistry;
@@ -63,14 +71,14 @@ export interface ExecuteActionRequest {
 
 export class RollbackKit {
     readonly registry: ActionRegistry;
-    readonly storage: StorageAdapter;
 
     readonly #clock: Clock;
+    readonly #storage: StorageAdapter;
 
     constructor(options: RollbackKitOptions = {}) {
         this.registry = options.registry ?? createActionRegistry(options.actions ?? []);
         this.#clock = options.clock ?? systemClock;
-        this.storage = options.storage ?? createMemoryStorageAdapter({ clock: this.#clock });
+        this.#storage = options.storage ?? createMemoryStorageAdapter({ clock: this.#clock });
     }
 
     registerAction<
@@ -95,6 +103,11 @@ export class RollbackKit {
             ...(request.target === undefined ? {} : { target: request.target }),
         });
 
+        await authorizeAction(action, {
+            ...initialContext,
+            phase: 'preview',
+        });
+
         const target = await resolveActionTarget(action, initialContext);
 
         const baseContext = createBaseActionContext({
@@ -103,11 +116,6 @@ export class RollbackKit {
             request,
             clock: this.#clock,
             ...(target === undefined ? {} : { target }),
-        });
-
-        await authorizeAction(action, {
-            ...baseContext,
-            phase: 'preview',
         });
 
         const preview = await action.preview({
@@ -123,12 +131,24 @@ export class RollbackKit {
         const input = await parseActionInput(action, request.input);
         const inputFingerprint = createActionInputFingerprint(input);
 
+        if (isUndoable(action.reversibility) && action.undo === undefined) {
+            throw createActionDefinitionNotUndoableError(
+                action.name,
+                'Undoable actions must provide an undo handler before execution.',
+            );
+        }
+
         const initialContext = createBaseActionContext({
             actionName: action.name,
             input,
             request,
             clock: this.#clock,
             ...(request.target === undefined ? {} : { target: request.target }),
+        });
+
+        await authorizeAction(action, {
+            ...initialContext,
+            phase: 'execute',
         });
 
         const target = await resolveActionTarget(action, initialContext);
@@ -139,11 +159,6 @@ export class RollbackKit {
             request,
             clock: this.#clock,
             ...(target === undefined ? {} : { target }),
-        });
-
-        await authorizeAction(action, {
-            ...baseContext,
-            phase: 'execute',
         });
 
         const idempotencyKey = request.idempotencyKey;
@@ -163,10 +178,10 @@ export class RollbackKit {
         const actionRunClaim =
             idempotencyKey === undefined
                 ? {
-                      run: await this.storage.createActionRun(createInput),
+                      run: await this.#storage.createActionRun(createInput),
                       created: true,
                   }
-                : await this.storage.claimActionRun({
+                : await this.#storage.claimActionRun({
                       ...createInput,
                       idempotencyKey,
                   });
@@ -195,30 +210,33 @@ export class RollbackKit {
             return run;
         }
 
-        const runningRun = await this.storage.updateActionRun(run.id, {
-            status: 'running',
-        });
-
         try {
-            const result = await action.execute({
-                ...baseContext,
-                phase: 'execute',
-                run: runningRun,
-                snapshots: new BoundSnapshotRecorder(this.storage, run.id),
-            });
+            return await this.#storage.withTransaction(async () => {
+                const runningRun = await this.#storage.updateActionRun(run.id, {
+                    status: 'running',
+                });
 
-            const completedMetadata = mergeMetadata(runningRun.metadata, result.metadata);
+                const result = await action.execute({
+                    ...baseContext,
+                    phase: 'execute',
+                    run: runningRun,
+                    snapshots: new BoundSnapshotRecorder(this.#storage, run.id),
+                    sideEffects: new BoundSideEffectRecorder(this.#storage, run.id),
+                });
 
-            return await this.storage.updateActionRun(run.id, {
-                status: 'completed',
-                executedAt: this.#clock.now(),
-                ...(result.data === undefined ? {} : { result: result.data }),
-                ...(completedMetadata === undefined ? {} : { metadata: completedMetadata }),
+                const completedMetadata = mergeMetadata(runningRun.metadata, result.metadata);
+
+                return this.#storage.updateActionRun(run.id, {
+                    status: 'completed',
+                    executedAt: this.#clock.now(),
+                    ...(result.data === undefined ? {} : { result: result.data }),
+                    ...(completedMetadata === undefined ? {} : { metadata: completedMetadata }),
+                });
             });
         } catch (error) {
             const rollbackError = normalizeExecutionError(action.name, error);
 
-            await this.storage.updateActionRun(run.id, {
+            await this.#storage.updateActionRun(run.id, {
                 status: 'failed',
                 executedAt: this.#clock.now(),
                 error: rollbackError.toJSON(),
@@ -229,70 +247,113 @@ export class RollbackKit {
     }
 
     async undo(request: UndoActionRequest): Promise<ActionRun> {
-        const existingRun = await this.storage.getActionRun(request.actionRunId);
+        const existingRun = await this.#storage.getActionRun(request.actionRunId);
 
         if (existingRun === null) {
             throw createActionRunNotFoundError(request.actionRunId);
         }
 
         const action = this.registry.require(existingRun.name);
-
-        return this.storage.withActionRunLock(request.actionRunId, async (lockedRun) => {
-            assertActionRunCanBeUndone(lockedRun, this.#clock.now());
-
-            if (action.undo === undefined) {
-                throw createActionNotUndoableError(
-                    lockedRun,
-                    'Action definition does not provide an undo handler.',
-                );
-            }
-
-            const baseContext = createBaseActionContextFromRun({
-                actionName: action.name,
-                run: lockedRun,
-                actor: request.actor,
-                clock: this.#clock,
-                ...(request.metadata === undefined ? {} : { metadata: request.metadata }),
-            });
-
-            await authorizeAction(action, {
-                ...baseContext,
-                phase: 'undo',
-            });
-
-            const undoRunningRun = await this.storage.updateActionRun(lockedRun.id, {
-                status: 'undo_running',
-                undoStartedAt: this.#clock.now(),
-            });
-
-            try {
-                const result = await action.undo({
-                    ...baseContext,
-                    phase: 'undo',
-                    run: undoRunningRun,
-                    snapshots: new BoundSnapshotReader(this.storage, lockedRun.id),
-                });
-
-                const undoneMetadata = mergeMetadata(undoRunningRun.metadata, result.metadata);
-
-                return await this.storage.updateActionRun(lockedRun.id, {
-                    status: 'undone',
-                    undoneAt: this.#clock.now(),
-                    undoneBy: request.actor,
-                    ...(result.data === undefined ? {} : { undoResult: result.data }),
-                    ...(undoneMetadata === undefined ? {} : { metadata: undoneMetadata }),
-                });
-            } catch (error) {
-                const rollbackError = normalizeUndoError(action.name, error);
-
-                await this.storage.updateActionRun(lockedRun.id, {
-                    status: 'undo_failed',
-                    error: rollbackError.toJSON(),
-                });
-
-                throw rollbackError;
-            }
+        const authContext = createBaseActionContextFromRun({
+            actionName: action.name,
+            run: existingRun,
+            actor: request.actor,
+            clock: this.#clock,
+            ...(request.metadata === undefined ? {} : { metadata: request.metadata }),
         });
+
+        await authorizeAction(action, {
+            ...authContext,
+            phase: 'undo',
+        });
+
+        let undoStarted = false;
+        let conflicts: DeferredConflictRecorder | undefined;
+
+        try {
+            const undoneRun = await this.#storage.withActionRunLock(
+                request.actionRunId,
+                async (lockedRun) => {
+                    assertActionRunCanBeUndone(lockedRun, this.#clock.now());
+
+                    if (action.undo === undefined) {
+                        throw createActionNotUndoableError(
+                            lockedRun,
+                            'Action definition does not provide an undo handler.',
+                        );
+                    }
+
+                    const baseContext = createBaseActionContextFromRun({
+                        actionName: action.name,
+                        run: lockedRun,
+                        actor: request.actor,
+                        clock: this.#clock,
+                        ...(request.metadata === undefined ? {} : { metadata: request.metadata }),
+                    });
+
+                    const undoRunningRun = await this.#storage.updateActionRun(lockedRun.id, {
+                        status: 'undo_running',
+                        undoStartedAt: this.#clock.now(),
+                    });
+
+                    undoStarted = true;
+                    conflicts = new DeferredConflictRecorder(lockedRun.id, this.#clock);
+
+                    const undoContext = {
+                        ...baseContext,
+                        phase: 'undo',
+                        run: undoRunningRun,
+                        snapshots: new BoundSnapshotReader(this.#storage, lockedRun.id),
+                        conflicts,
+                    } as const;
+
+                    await action.checkConflicts?.(undoContext);
+
+                    const result = await action.undo(undoContext);
+
+                    const undoneMetadata = mergeMetadata(undoRunningRun.metadata, result.metadata);
+
+                    return await this.#storage.updateActionRun(lockedRun.id, {
+                        status: 'undone',
+                        undoneAt: this.#clock.now(),
+                        undoneBy: request.actor,
+                        ...(result.data === undefined ? {} : { undoResult: result.data }),
+                        ...(undoneMetadata === undefined ? {} : { metadata: undoneMetadata }),
+                    });
+                },
+            );
+
+            await conflicts?.flush(this.#storage);
+
+            return undoneRun;
+        } catch (error) {
+            if (!undoStarted) {
+                throw error;
+            }
+
+            const rollbackError = normalizeUndoError(action.name, error);
+
+            await conflicts?.flush(this.#storage);
+
+            await this.#storage.updateActionRun(existingRun.id, {
+                status: 'undo_failed',
+                error: rollbackError.toJSON(),
+            });
+
+            throw rollbackError;
+        }
+    }
+
+    async getActionRun(id: string): Promise<ActionRun | null> {
+        return this.#storage.getActionRun(id);
+    }
+
+    async getSnapshots(actionRunId: string): Promise<readonly Snapshot[]> {
+        return this.#storage.getSnapshots(actionRunId);
+    }
+
+    async queryActionRuns(query: ActionHistoryQuery): Promise<readonly ActionRun[]> {
+        return this.#storage.queryActionRuns(query);
     }
 }
 

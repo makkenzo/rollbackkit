@@ -64,6 +64,17 @@ export interface RecordSideEffectInput<TPayload extends JsonValue = JsonValue> {
     readonly metadata?: JsonObject;
 }
 
+export type RecordBoundSideEffectInput<TPayload extends JsonValue = JsonValue> = Omit<
+    RecordSideEffectInput<TPayload>,
+    'actionRunId'
+>;
+
+export interface SideEffectRecorder {
+    record<TPayload extends JsonValue = JsonValue>(
+        input: RecordBoundSideEffectInput<TPayload>,
+    ): Promise<ActionSideEffect<TPayload>>;
+}
+
 export interface ActionConflict {
     readonly id: string;
     readonly actionRunId: string;
@@ -78,6 +89,10 @@ export interface RecordConflictInput {
     readonly details?: JsonObject;
 }
 
+export interface ConflictRecorder {
+    record(reason: string, details?: JsonObject): Promise<ActionConflict>;
+}
+
 export interface ActionHistoryQuery {
     readonly tenantId?: string;
     readonly actorId?: string;
@@ -90,6 +105,8 @@ export interface ActionHistoryQuery {
 }
 
 export interface StorageAdapter {
+    withTransaction<TValue>(handler: () => Promise<TValue>): Promise<TValue>;
+
     createActionRun<TInput extends JsonValue = JsonValue>(
         input: CreateActionRunInput<TInput>,
     ): Promise<ActionRun<TInput>>;

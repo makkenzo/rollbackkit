@@ -76,6 +76,20 @@ export function createActionNotUndoableError(run: ActionRun, reason: string): Ro
     });
 }
 
+export function createActionDefinitionNotUndoableError(
+    actionName: string,
+    reason: string,
+): RollbackKitError {
+    return new RollbackKitError({
+        code: 'ACTION_NOT_UNDOABLE',
+        message: `Action "${actionName}" cannot create an undoable run: ${reason}`,
+        details: {
+            actionName,
+            reason,
+        },
+    });
+}
+
 export function normalizeUndoError(actionName: string, error: unknown): RollbackKitError {
     if (isRollbackKitError(error)) {
         return error;

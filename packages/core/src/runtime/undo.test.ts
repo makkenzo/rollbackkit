@@ -2,10 +2,21 @@ import { describe, expect, it } from 'vitest';
 
 import {
     type ActionActor,
+    type ActionRun,
+    type ClaimActionRunInput,
+    type ClaimActionRunResult,
+    type CreateActionRunInput,
+    type CreateSnapshotInput,
+    createMemoryStorageAdapter,
     createRollbackKit,
     defineAction,
+    type JsonValue,
     REVERSIBILITY,
+    type RecordConflictInput,
+    type RecordSideEffectInput,
     RollbackKitError,
+    type StorageAdapter,
+    type UpdateActionRunInput,
 } from '../index';
 
 const actor: ActionActor = {
@@ -143,7 +154,7 @@ describe('RollbackKit undo lifecycle', () => {
             code: 'ACTION_PERMISSION_DENIED',
         });
 
-        await expect(kit.storage.getActionRun(run.id)).resolves.toMatchObject({
+        await expect(kit.getActionRun(run.id)).resolves.toMatchObject({
             status: 'completed',
         });
     });
@@ -199,6 +210,51 @@ describe('RollbackKit undo lifecycle', () => {
             ],
         });
 
+        await expect(
+            kit.execute({
+                name: 'project.archive',
+                actor,
+                input: {
+                    projectId: 'project_1',
+                },
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_NOT_UNDOABLE',
+        });
+    });
+
+    it('checks conflicts before running undo handler and records conflict details', async () => {
+        let undoCalled = false;
+
+        const kit = createRollbackKit({
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => ({}),
+                    checkConflicts: async (context) => {
+                        await context.conflicts.record('Project is active again.', {
+                            projectId: 'project_1',
+                        });
+
+                        throw new RollbackKitError({
+                            code: 'ACTION_CONFLICT',
+                            message: 'Project is active again.',
+                        });
+                    },
+                    undo: async () => {
+                        undoCalled = true;
+                        return {};
+                    },
+                }),
+            ],
+        });
+
         const run = await kit.execute({
             name: 'project.archive',
             actor,
@@ -213,7 +269,82 @@ describe('RollbackKit undo lifecycle', () => {
                 actor: undoActor,
             }),
         ).rejects.toMatchObject({
-            code: 'ACTION_NOT_UNDOABLE',
+            code: 'ACTION_CONFLICT',
+        });
+
+        expect(undoCalled).toBe(false);
+        await expect(kit.getActionRun(run.id)).resolves.toMatchObject({
+            status: 'undo_failed',
+            error: {
+                code: 'ACTION_CONFLICT',
+                message: 'Project is active again.',
+            },
+        });
+    });
+
+    it('persists undo failure state and conflicts after a transactional lock rolls back handler writes', async () => {
+        const storage = createRollbackingActionRunLockStorage();
+
+        const kit = createRollbackKit({
+            storage,
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => ({}),
+                    checkConflicts: async (context) => {
+                        await context.conflicts.record('Project is active again.', {
+                            projectId: 'project_1',
+                        });
+
+                        throw new RollbackKitError({
+                            code: 'ACTION_CONFLICT',
+                            message: 'Project is active again.',
+                        });
+                    },
+                    undo: async () => ({}),
+                }),
+            ],
+        });
+
+        const run = await kit.execute({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+        });
+
+        await expect(
+            kit.undo({
+                actionRunId: run.id,
+                actor: undoActor,
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_CONFLICT',
+        });
+
+        expect(storage.conflicts).toEqual([
+            {
+                actionRunId: run.id,
+                reason: 'Project is active again.',
+                details: {
+                    projectId: 'project_1',
+                },
+            },
+        ]);
+
+        await expect(kit.getActionRun(run.id)).resolves.toMatchObject({
+            status: 'undo_failed',
+            error: {
+                code: 'ACTION_CONFLICT',
+                message: 'Project is active again.',
+            },
         });
     });
 
@@ -336,7 +467,7 @@ describe('RollbackKit undo lifecycle', () => {
             code: 'ACTION_UNDO_FAILED',
         });
 
-        await expect(kit.storage.getActionRun(run.id)).resolves.toMatchObject({
+        await expect(kit.getActionRun(run.id)).resolves.toMatchObject({
             status: 'undo_failed',
             error: {
                 code: 'ACTION_UNDO_FAILED',
@@ -358,3 +489,59 @@ describe('RollbackKit undo lifecycle', () => {
         });
     });
 });
+
+function createRollbackingActionRunLockStorage(): StorageAdapter & {
+    readonly conflicts: RecordConflictInput[];
+} {
+    const storage = createMemoryStorageAdapter();
+    const conflicts: RecordConflictInput[] = [];
+
+    return {
+        conflicts,
+        withTransaction: (handler) => storage.withTransaction(handler),
+        createActionRun: <TInput extends JsonValue = JsonValue>(
+            input: CreateActionRunInput<TInput>,
+        ) => storage.createActionRun(input),
+        claimActionRun: <TInput extends JsonValue = JsonValue>(
+            input: ClaimActionRunInput<TInput>,
+        ): Promise<ClaimActionRunResult<TInput>> => storage.claimActionRun(input),
+        getActionRun: (id: string) => storage.getActionRun(id),
+        updateActionRun: <TResult extends JsonValue = JsonValue>(
+            id: string,
+            input: UpdateActionRunInput<TResult>,
+        ) => storage.updateActionRun(id, input),
+        saveSnapshot: <TValue extends JsonValue = JsonValue>(input: CreateSnapshotInput<TValue>) =>
+            storage.saveSnapshot(input),
+        getSnapshots: (actionRunId: string) => storage.getSnapshots(actionRunId),
+        recordSideEffect: <TPayload extends JsonValue = JsonValue>(
+            input: RecordSideEffectInput<TPayload>,
+        ) => storage.recordSideEffect(input),
+        recordConflict: async (input) => {
+            conflicts.push(input);
+
+            return storage.recordConflict(input);
+        },
+        queryActionRuns: (query) => storage.queryActionRuns(query),
+        withActionRunLock: async <TValue>(
+            actionRunId: string,
+            handler: (run: ActionRun) => Promise<TValue>,
+        ): Promise<TValue> => {
+            const runBeforeLock = await storage.getActionRun(actionRunId);
+            const conflictCountBeforeLock = conflicts.length;
+
+            try {
+                return await storage.withActionRunLock(actionRunId, handler);
+            } catch (error) {
+                conflicts.splice(conflictCountBeforeLock);
+
+                if (runBeforeLock !== null) {
+                    await storage.updateActionRun(actionRunId, {
+                        status: runBeforeLock.status,
+                    });
+                }
+
+                throw error;
+            }
+        },
+    };
+}

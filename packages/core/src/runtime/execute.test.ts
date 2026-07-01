@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
     type ActionActor,
+    type ActionSideEffect,
     createRollbackKit,
     defineAction,
+    type JsonValue,
+    MemoryStorageAdapter,
     REVERSIBILITY,
+    type RecordSideEffectInput,
     RollbackKitError,
 } from '../index';
 
@@ -13,6 +17,8 @@ const actor: ActionActor = {
     type: 'user',
     displayName: 'Test User',
 };
+
+const noopUndo = async () => ({});
 
 describe('RollbackKit execute lifecycle', () => {
     it('executes an action and stores completed action run', async () => {
@@ -31,6 +37,7 @@ describe('RollbackKit execute lifecycle', () => {
                             archived: true,
                         },
                     }),
+                    undo: noopUndo,
                 }),
             ],
         });
@@ -60,7 +67,46 @@ describe('RollbackKit execute lifecycle', () => {
             archived: true,
         });
 
-        await expect(kit.storage.getActionRun(run.id)).resolves.toEqual(run);
+        await expect(kit.getActionRun(run.id)).resolves.toEqual(run);
+    });
+
+    it('runs new action execution inside a storage transaction', async () => {
+        class TransactionalMemoryStorage extends MemoryStorageAdapter {
+            transactionCount = 0;
+
+            async withTransaction<TValue>(handler: () => Promise<TValue>): Promise<TValue> {
+                this.transactionCount += 1;
+                return handler();
+            }
+        }
+
+        const storage = new TransactionalMemoryStorage();
+        const kit = createRollbackKit({
+            storage,
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => ({}),
+                    undo: noopUndo,
+                }),
+            ],
+        });
+
+        await kit.execute({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+        });
+
+        expect(storage.transactionCount).toBe(1);
     });
 
     it('passes resolved target into execute context', async () => {
@@ -84,6 +130,7 @@ describe('RollbackKit execute lifecycle', () => {
                             targetLabel: context.target?.label ?? null,
                         },
                     }),
+                    undo: noopUndo,
                 }),
             ],
         });
@@ -123,6 +170,7 @@ describe('RollbackKit execute lifecycle', () => {
                             },
                         };
                     },
+                    undo: noopUndo,
                 }),
             ],
         });
@@ -136,7 +184,7 @@ describe('RollbackKit execute lifecycle', () => {
             },
         });
 
-        await expect(kit.storage.getSnapshots(run.id)).resolves.toMatchObject([
+        await expect(kit.getSnapshots(run.id)).resolves.toMatchObject([
             {
                 actionRunId: run.id,
                 key: 'previousRole',
@@ -145,6 +193,58 @@ describe('RollbackKit execute lifecycle', () => {
                 },
             },
         ]);
+    });
+
+    it('allows execute handlers to record side effects', async () => {
+        class SideEffectMemoryStorage extends MemoryStorageAdapter {
+            recordedSideEffectTypes: string[] = [];
+
+            override async recordSideEffect<TPayload extends JsonValue = JsonValue>(
+                input: RecordSideEffectInput<TPayload>,
+            ): Promise<ActionSideEffect<TPayload>> {
+                this.recordedSideEffectTypes.push(input.type);
+                return super.recordSideEffect(input);
+            }
+        }
+
+        const storage = new SideEffectMemoryStorage();
+        const kit = createRollbackKit({
+            storage,
+            actions: [
+                defineAction({
+                    name: 'member.invite',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Invite member',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async (context) => {
+                        await context.sideEffects.record({
+                            type: 'email.invitation',
+                            status: 'completed',
+                            reversibility: REVERSIBILITY.compensating,
+                            payload: {
+                                email: 'grace@example.com',
+                            },
+                        });
+
+                        return {};
+                    },
+                    undo: noopUndo,
+                }),
+            ],
+        });
+
+        await kit.execute({
+            name: 'member.invite',
+            actor,
+            input: {
+                email: 'grace@example.com',
+            },
+        });
+
+        expect(storage.recordedSideEffectTypes).toEqual(['email.invitation']);
     });
 
     it('checks execute permission', async () => {
@@ -163,6 +263,7 @@ describe('RollbackKit execute lifecycle', () => {
                         reversibility: REVERSIBILITY.full,
                     }),
                     execute: async () => ({}),
+                    undo: noopUndo,
                 }),
             ],
         });
@@ -194,6 +295,7 @@ describe('RollbackKit execute lifecycle', () => {
                     execute: async () => {
                         throw new Error('Database write failed.');
                     },
+                    undo: noopUndo,
                 }),
             ],
         });
@@ -211,7 +313,7 @@ describe('RollbackKit execute lifecycle', () => {
         });
 
         await expect(
-            kit.storage.queryActionRuns({
+            kit.queryActionRuns({
                 name: 'project.archive',
             }),
         ).resolves.toMatchObject([
@@ -243,6 +345,7 @@ describe('RollbackKit execute lifecycle', () => {
                         reversibility: REVERSIBILITY.full,
                     }),
                     execute: async () => ({}),
+                    undo: noopUndo,
                 }),
             ],
         });
@@ -280,6 +383,7 @@ describe('RollbackKit execute lifecycle', () => {
                             },
                         };
                     },
+                    undo: noopUndo,
                 }),
             ],
         });
@@ -330,6 +434,7 @@ describe('RollbackKit execute lifecycle', () => {
 
                         return {};
                     },
+                    undo: noopUndo,
                 }),
             ],
         });
@@ -357,6 +462,35 @@ describe('RollbackKit execute lifecycle', () => {
         });
 
         expect(executionCount).toBe(1);
+    });
+
+    it('rejects executing undoable actions without an undo handler', async () => {
+        const kit = createRollbackKit({
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => ({}),
+                }),
+            ],
+        });
+
+        await expect(
+            kit.execute({
+                name: 'project.archive',
+                actor,
+                input: {
+                    projectId: 'project_1',
+                },
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_NOT_UNDOABLE',
+        });
     });
 
     it('does not store undo expiration for irreversible actions', async () => {

@@ -6,6 +6,7 @@ import type { Reversibility } from '../lifecycle/reversibility';
 import type { JsonObject, JsonValue } from '../shared/json';
 import type { Clock, DurationMs } from '../shared/time';
 import type { SnapshotReader, SnapshotRecorder } from '../storage/snapshot';
+import type { ConflictRecorder, SideEffectRecorder } from '../storage/storage';
 
 export type MaybePromise<TValue> = TValue | Promise<TValue>;
 
@@ -46,6 +47,7 @@ export interface ExecuteActionContext<TInput extends JsonValue = JsonValue>
     readonly phase: 'execute';
     readonly run: ActionRun<TInput>;
     readonly snapshots: SnapshotRecorder;
+    readonly sideEffects: SideEffectRecorder;
 }
 
 export interface UndoActionContext<TInput extends JsonValue = JsonValue>
@@ -53,6 +55,7 @@ export interface UndoActionContext<TInput extends JsonValue = JsonValue>
     readonly phase: 'undo';
     readonly run: ActionRun<TInput>;
     readonly snapshots: SnapshotReader;
+    readonly conflicts: ConflictRecorder;
 }
 
 export interface ActionDefinition<
@@ -73,6 +76,8 @@ export interface ActionDefinition<
     preview: (context: PreviewActionContext<TInput>) => MaybePromise<PreviewResult>;
 
     execute: (context: ExecuteActionContext<TInput>) => MaybePromise<ExecuteResult<TExecuteData>>;
+
+    checkConflicts?: (context: UndoActionContext<TInput>) => MaybePromise<void>;
 
     undo?: (context: UndoActionContext<TInput>) => MaybePromise<UndoResult<TUndoData>>;
 }

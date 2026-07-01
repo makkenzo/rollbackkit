@@ -39,6 +39,10 @@ export class MemoryStorageAdapter implements StorageAdapter {
         this.#idPrefix = options.idPrefix ?? '';
     }
 
+    async withTransaction<TValue>(handler: () => Promise<TValue>): Promise<TValue> {
+        return handler();
+    }
+
     async createActionRun<TInput extends JsonValue = JsonValue>(
         input: CreateActionRunInput<TInput>,
     ): Promise<ActionRun<TInput>> {
