@@ -1,0 +1,74 @@
+name: Integration
+
+on:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres:
+    name: PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: rollbackkit_test
+          POSTGRES_USER: rollbackkit
+          POSTGRES_PASSWORD: rollbackkit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rollbackkit -d rollbackkit_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      ROLLBACKKIT_DATABASE_URL: postgres://rollbackkit:rollbackkit@localhost:5432/rollbackkit_test
+      ROLLBACKKIT_POSTGRES_TEST_DATABASE_URL: postgres://rollbackkit:rollbackkit@localhost:5432/rollbackkit_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.9.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build PostgreSQL and CLI packages
+        run: |
+          pnpm --filter @rollbackkit/postgres build
+          pnpm --filter @rollbackkit/cli build
+
+      - name: Apply RollbackKit migrations
+        run: pnpm --filter @rollbackkit/cli exec node dist/bin.mjs migrate
+
+      - name: Check RollbackKit migration status
+        run: pnpm --filter @rollbackkit/cli exec node dist/bin.mjs doctor
+
+      - name: Run PostgreSQL integration tests
+        run: pnpm test:integration:postgres

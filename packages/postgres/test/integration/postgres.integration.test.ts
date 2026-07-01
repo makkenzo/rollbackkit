@@ -139,6 +139,56 @@ ORDER BY indexname ASC
         }
     });
 
+    it('serializes concurrent migration runners on a real PostgreSQL database', async () => {
+        const context = await createPostgresTestContext();
+        const secondClient = await context.createClient();
+
+        try {
+            const firstRunner = createPostgresMigrationRunner({
+                executor: context.client,
+            });
+            const secondRunner = createPostgresMigrationRunner({
+                executor: secondClient,
+            });
+
+            const results = await Promise.all([firstRunner.migrate(), secondRunner.migrate()]);
+
+            expect(results.filter((result) => result.applied.length === 2)).toHaveLength(1);
+            expect(results.filter((result) => result.applied.length === 0)).toHaveLength(1);
+            expect(
+                results.every(
+                    (result) => result.applied.length === 2 || result.skipped.length === 2,
+                ),
+            ).toBe(true);
+
+            const appliedRows = await context.client.query<{
+                readonly id: string;
+                readonly migration_count: number;
+            }>(
+                `
+SELECT id, COUNT(*)::int AS migration_count
+FROM rollbackkit_schema_migrations
+GROUP BY id
+ORDER BY id ASC
+`,
+            );
+
+            expect(appliedRows.rows).toEqual([
+                {
+                    id: '0001_initial_schema',
+                    migration_count: 1,
+                },
+                {
+                    id: '0002_action_run_idempotency',
+                    migration_count: 1,
+                },
+            ]);
+        } finally {
+            await secondClient.end().catch(() => undefined);
+            await context.cleanup();
+        }
+    });
+
     it('preserves top-level JSON null and arrays as JSONB values', async () => {
         const context = await createPostgresTestContext();
 
@@ -252,6 +302,138 @@ WHERE id = $1
                 payload_json_type: 'null',
             });
         } finally {
+            await context.cleanup();
+        }
+    });
+
+    it('deduplicates concurrent idempotent claims on a real PostgreSQL database', async () => {
+        const context = await createPostgresTestContext();
+        const secondClient = await context.createClient();
+
+        try {
+            const now = new Date('2026-01-01T00:00:00.000Z');
+            const clock = {
+                now: () => now,
+            };
+
+            await createPostgresMigrationRunner({
+                executor: context.client,
+            }).migrate();
+
+            const firstStore = createPostgresStore({
+                executor: context.client,
+                clock,
+            });
+            const secondStore = createPostgresStore({
+                executor: secondClient,
+                clock,
+            });
+
+            const claimInput = {
+                name: 'project.archive',
+                actor,
+                tenantId: 'tenant_1',
+                target: {
+                    id: 'project_1',
+                    type: 'project',
+                    label: 'Demo Project',
+                },
+                input: {
+                    projectId: 'project_1',
+                },
+                inputHash: 'fnv1a64:hash_1',
+                idempotencyKey: 'request_1',
+                reversibility: REVERSIBILITY.full,
+            } as const;
+
+            const results = await Promise.all([
+                firstStore.claimActionRun(claimInput),
+                secondStore.claimActionRun(claimInput),
+            ]);
+
+            expect(results.filter((result) => result.created)).toHaveLength(1);
+            expect(results.filter((result) => !result.created)).toHaveLength(1);
+            expect(new Set(results.map((result) => result.run.id)).size).toBe(1);
+            expect(results[0]?.run).toEqual(results[1]?.run);
+
+            const actionRunCount = await context.client.query<{
+                readonly action_run_count: number;
+            }>(
+                `
+SELECT COUNT(*)::int AS action_run_count
+FROM rollbackkit_action_runs
+WHERE idempotency_key = $1
+`,
+                [claimInput.idempotencyKey],
+            );
+
+            expect(actionRunCount.rows[0]?.action_run_count).toBe(1);
+        } finally {
+            await secondClient.end().catch(() => undefined);
+            await context.cleanup();
+        }
+    });
+
+    it('serializes concurrent action run locks on a real PostgreSQL database', async () => {
+        const context = await createPostgresTestContext();
+        const secondClient = await context.createClient();
+
+        try {
+            await createPostgresMigrationRunner({
+                executor: context.client,
+            }).migrate();
+
+            const firstStore = createPostgresStore({
+                executor: context.client,
+            });
+            const secondStore = createPostgresStore({
+                executor: secondClient,
+            });
+            const run = await firstStore.createActionRun({
+                name: 'project.archive',
+                actor,
+                input: {
+                    projectId: 'project_1',
+                },
+                reversibility: REVERSIBILITY.full,
+            });
+            const firstLocked = createDeferred();
+            const releaseFirst = createDeferred();
+            const lockEvents: string[] = [];
+
+            const firstLock = firstStore.withActionRunLock(run.id, async () => {
+                lockEvents.push('first:locked');
+                firstLocked.resolve();
+                await releaseFirst.promise;
+                lockEvents.push('first:released');
+
+                return 'first';
+            });
+
+            await firstLocked.promise;
+
+            let secondEntered = false;
+            const secondLock = secondStore.withActionRunLock(run.id, async () => {
+                secondEntered = true;
+                lockEvents.push('second:locked');
+
+                return 'second';
+            });
+
+            try {
+                await delay(50);
+                expect(secondEntered).toBe(false);
+            } finally {
+                releaseFirst.resolve();
+            }
+
+            await expect(Promise.all([firstLock, secondLock])).resolves.toEqual([
+                'first',
+                'second',
+            ]);
+            expect(lockEvents).toEqual(['first:locked', 'first:released', 'second:locked']);
+        } finally {
+            await secondClient.end().catch(() => undefined);
             await context.cleanup();
         }
     });
@@ -409,6 +591,7 @@ WHERE id = $1
 interface PostgresTestContext {
     readonly client: Client;
     readonly schemaName: string;
+    createClient(): Promise<Client>;
     cleanup(): Promise<void>;
 }
 
@@ -418,7 +601,7 @@ async function createPostgresTestContext(): Promise<PostgresTestContext> {
     }
 
     const client = new Client({
-        connectionString: DATABASE_URL,
+        connectionString: getPostgresTestDatabaseUrl(),
     });
 
     await client.connect();
@@ -432,6 +615,7 @@ async function createPostgresTestContext(): Promise<PostgresTestContext> {
         return {
             client,
             schemaName,
+            createClient: () => createPostgresTestClient(schemaName),
             cleanup: async () => {
                 await client
                     .query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schemaName)} CASCADE`)
@@ -447,6 +631,47 @@ async function createPostgresTestContext(): Promise<PostgresTestContext> {
     }
 }
 
+async function createPostgresTestClient(schemaName: string): Promise<Client> {
+    const client = new Client({
+        connectionString: getPostgresTestDatabaseUrl(),
+    });
+
+    await client.connect();
+    await client.query(`SET search_path TO ${quoteIdentifier(schemaName)}`);
+
+    return client;
+}
+
+function getPostgresTestDatabaseUrl(): string {
+    if (DATABASE_URL === undefined) {
+        throw new Error('ROLLBACKKIT_POSTGRES_TEST_DATABASE_URL is required.');
+    }
+
+    return DATABASE_URL;
+}
+
 function quoteIdentifier(identifier: string): string {
     return `"${identifier.replaceAll('"', '""')}"`;
+}
+
+function createDeferred(): {
+    readonly promise: Promise<void>;
+    readonly resolve: () => void;
+} {
+    let resolvePromise: () => void = () => undefined;
+
+    const promise = new Promise<void>((resolve) => {
+        resolvePromise = resolve;
+    });
+
+    return {
+        promise,
+        resolve: resolvePromise,
+    };
+}
+
+function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
 }

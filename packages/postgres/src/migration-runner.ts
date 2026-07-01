@@ -17,6 +17,9 @@ ALTER TABLE rollbackkit_schema_migrations
     ADD COLUMN IF NOT EXISTS checksum text;
 `;
 
+const ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_CLASS_ID = 1_763_074_182;
+const ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_OBJECT_ID = 1;
+
 interface AppliedMigrationRow extends QueryResultRow {
     readonly id: string;
     readonly checksum: string | null;
@@ -100,96 +103,102 @@ export class PostgresMigrationRunner {
     }
 
     async getAppliedMigrations(): Promise<readonly AppliedPostgresMigration[]> {
-        await this.#ensureSchemaMigrationsTable();
+        return this.#withMigrationAdvisoryLock(async () => {
+            await this.#ensureSchemaMigrationsTable();
 
-        return this.#readAppliedMigrations();
+            return this.#readAppliedMigrations();
+        });
     }
 
     async getMigrationStatus(): Promise<PostgresMigrationStatus> {
-        const schemaTableExists = await this.#readSchemaMigrationsTableExists();
+        return this.#withMigrationAdvisoryLock(async () => {
+            const schemaTableExists = await this.#readSchemaMigrationsTableExists();
 
-        if (!schemaTableExists) {
-            return this.#createMigrationStatus([], false);
-        }
+            if (!schemaTableExists) {
+                return this.#createMigrationStatus([], false);
+            }
 
-        await this.#ensureSchemaMigrationChecksums();
+            await this.#ensureSchemaMigrationChecksums();
 
-        return this.#createMigrationStatus(await this.#readAppliedMigrations(), true);
+            return this.#createMigrationStatus(await this.#readAppliedMigrations(), true);
+        });
     }
 
     async migrate(): Promise<PostgresMigrationResult> {
-        await this.#ensureSchemaMigrationsTable();
+        return this.#withMigrationAdvisoryLock(async () => {
+            await this.#ensureSchemaMigrationsTable();
 
-        const status = this.#createMigrationStatus(await this.#readAppliedMigrations(), true);
+            const status = this.#createMigrationStatus(await this.#readAppliedMigrations(), true);
 
-        if (status.pending.length === 0) {
-            return {
-                applied: [],
-                skipped: status.skipped,
-            };
-        }
-
-        let currentMigration: RollbackKitPostgresMigration | undefined;
-
-        await this.#executor.query('BEGIN');
-
-        try {
-            await this.#executor.query(
-                'LOCK TABLE rollbackkit_schema_migrations IN SHARE ROW EXCLUSIVE MODE',
-            );
-
-            const lockedStatus = this.#createMigrationStatus(
-                await this.#readAppliedMigrations(),
-                true,
-            );
-
-            if (lockedStatus.pending.length === 0) {
-                await this.#executor.query('COMMIT');
-
+            if (status.pending.length === 0) {
                 return {
                     applied: [],
-                    skipped: lockedStatus.skipped,
+                    skipped: status.skipped,
                 };
             }
 
-            for (const migration of lockedStatus.pending) {
-                currentMigration = migration;
+            let currentMigration: RollbackKitPostgresMigration | undefined;
 
-                await this.#executor.query(migration.sql);
+            await this.#executor.query('BEGIN');
+
+            try {
                 await this.#executor.query(
-                    `
+                    'LOCK TABLE rollbackkit_schema_migrations IN SHARE ROW EXCLUSIVE MODE',
+                );
+
+                const lockedStatus = this.#createMigrationStatus(
+                    await this.#readAppliedMigrations(),
+                    true,
+                );
+
+                if (lockedStatus.pending.length === 0) {
+                    await this.#executor.query('COMMIT');
+
+                    return {
+                        applied: [],
+                        skipped: lockedStatus.skipped,
+                    };
+                }
+
+                for (const migration of lockedStatus.pending) {
+                    currentMigration = migration;
+
+                    await this.#executor.query(migration.sql);
+                    await this.#executor.query(
+                        `
 	INSERT INTO rollbackkit_schema_migrations (id, description, checksum)
 	VALUES ($1, $2, $3)
 	`,
-                    [migration.id, migration.description, createMigrationChecksum(migration)],
+                        [migration.id, migration.description, createMigrationChecksum(migration)],
+                    );
+                }
+
+                await this.#executor.query('COMMIT');
+
+                return {
+                    applied: lockedStatus.pending,
+                    skipped: lockedStatus.skipped,
+                };
+            } catch (error) {
+                await this.#executor.query('ROLLBACK').catch(() => undefined);
+
+                if (error instanceof RollbackKitPostgresMigrationError) {
+                    throw error;
+                }
+
+                const migrationId = currentMigration?.id;
+
+                throw new RollbackKitPostgresMigrationError(
+                    `Failed to apply RollbackKit PostgreSQL migration${
+                        migrationId === undefined ? '' : ` "${migrationId}"`
+                    }.`,
+                    {
+                        ...(migrationId === undefined ? {} : { migrationId }),
+                        cause: error,
+                    },
                 );
             }
-
-            await this.#executor.query('COMMIT');
-
-            return {
-                applied: lockedStatus.pending,
-                skipped: lockedStatus.skipped,
-            };
-        } catch (error) {
-            await this.#executor.query('ROLLBACK').catch(() => undefined);
-
-            if (error instanceof RollbackKitPostgresMigrationError) {
-                throw error;
-            }
-
-            const migrationId = currentMigration?.id;
-
-            throw new RollbackKitPostgresMigrationError(
-                `Failed to apply RollbackKit PostgreSQL migration${
-                    migrationId === undefined ? '' : ` "${migrationId}"`
-                }.`,
-                {
-                    ...(migrationId === undefined ? {} : { migrationId }),
-                    cause: error,
-                },
-            );
-        }
+        });
     }
 
     async #ensureSchemaMigrationsTable(): Promise<void> {
@@ -233,6 +242,24 @@ SELECT to_regclass('rollbackkit_schema_migrations')::text AS table_name
             checksum: mapMigrationChecksum(row),
             appliedAt: row.applied_at instanceof Date ? row.applied_at : new Date(row.applied_at),
         }));
+    }
+
+    async #withMigrationAdvisoryLock<TValue>(handler: () => Promise<TValue>): Promise<TValue> {
+        await this.#executor.query('SELECT pg_advisory_lock($1, $2)', [
+            ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_CLASS_ID,
+            ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_OBJECT_ID,
+        ]);
+
+        try {
+            return await handler();
+        } finally {
+            await this.#executor
+                .query('SELECT pg_advisory_unlock($1, $2)', [
+                    ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_CLASS_ID,
+                    ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_OBJECT_ID,
+                ])
+                .catch(() => undefined);
+        }
     }
 
     #createMigrationStatus(
