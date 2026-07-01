@@ -1,22 +1,11 @@
-import type { QueryResult, QueryResultRow } from 'pg';
+import type { PostgresMigrationResult, PostgresMigrationStatus } from '@rollbackkit/postgres';
 import { describe, expect, it } from 'vitest';
 
 import {
     type CliWriter,
     createRollbackKitCliProgram,
-    type RollbackKitCliPostgresClient,
     rollbackkitCliVersion,
 } from '../../src/program';
-
-interface RecordedQuery {
-    readonly text: string;
-    readonly values?: unknown[];
-}
-
-interface FakeAppliedMigrationRow extends QueryResultRow {
-    readonly id: string;
-    readonly applied_at: Date | string;
-}
 
 class MemoryWriter implements CliWriter {
     output = '';
@@ -26,71 +15,17 @@ class MemoryWriter implements CliWriter {
     }
 }
 
-class FakePostgresClient implements RollbackKitCliPostgresClient {
-    readonly queries: RecordedQuery[] = [];
-    readonly appliedRows: FakeAppliedMigrationRow[];
+const pendingMigration = {
+    id: '0001_initial_schema',
+    description: 'Create RollbackKit tables.',
+    sql: 'select 1',
+};
 
-    connected = false;
-    ended = false;
-    schemaMigrationsTableExists: boolean;
-
-    constructor(
-        appliedRows: readonly FakeAppliedMigrationRow[] = [],
-        options: { readonly schemaMigrationsTableExists?: boolean } = {},
-    ) {
-        this.appliedRows = [...appliedRows];
-        this.schemaMigrationsTableExists =
-            options.schemaMigrationsTableExists ?? appliedRows.length > 0;
-    }
-
-    async connect(): Promise<void> {
-        this.connected = true;
-    }
-
-    async end(): Promise<void> {
-        this.ended = true;
-    }
-
-    async query<TResult extends QueryResultRow = QueryResultRow>(
-        text: string,
-        values?: unknown[],
-    ): Promise<QueryResult<TResult>> {
-        this.queries.push(values === undefined ? { text } : { text, values });
-
-        if (text.includes("to_regclass('rollbackkit_schema_migrations')")) {
-            return createQueryResult([
-                {
-                    table_name: this.schemaMigrationsTableExists
-                        ? 'rollbackkit_schema_migrations'
-                        : null,
-                },
-            ] as unknown as TResult[]);
-        }
-
-        if (text.includes('CREATE TABLE IF NOT EXISTS rollbackkit_schema_migrations')) {
-            this.schemaMigrationsTableExists = true;
-
-            return createQueryResult([]);
-        }
-
-        if (text.includes('SELECT id, applied_at')) {
-            return createQueryResult(this.appliedRows as unknown as TResult[]);
-        }
-
-        if (text.includes('INSERT INTO rollbackkit_schema_migrations') && values !== undefined) {
-            const id = String(values[0]);
-
-            if (!this.appliedRows.some((row) => row.id === id)) {
-                this.appliedRows.push({
-                    id,
-                    applied_at: new Date('2026-01-01T00:00:00.000Z'),
-                });
-            }
-        }
-
-        return createQueryResult([]);
-    }
-}
+const idempotencyMigration = {
+    id: '0002_action_run_idempotency',
+    description: 'Add idempotency keys.',
+    sql: 'select 2',
+};
 
 describe('@rollbackkit/cli', () => {
     it('exports package version placeholder', () => {
@@ -99,12 +34,19 @@ describe('@rollbackkit/cli', () => {
 
     it('applies PostgreSQL migrations', async () => {
         const stdout = new MemoryWriter();
-        const client = new FakePostgresClient();
+        let receivedDatabaseUrl: string | undefined;
 
         const program = createRollbackKitCliProgram({
             stdout,
             env: {},
-            createPostgresClient: () => client,
+            migratePostgresDatabase: async ({ databaseUrl }) => {
+                receivedDatabaseUrl = databaseUrl;
+
+                return {
+                    applied: [pendingMigration, idempotencyMigration],
+                    skipped: [],
+                } satisfies PostgresMigrationResult;
+            },
         });
 
         await program.parseAsync(
@@ -114,33 +56,23 @@ describe('@rollbackkit/cli', () => {
             },
         );
 
-        expect(client.connected).toBe(true);
-        expect(client.ended).toBe(true);
+        expect(receivedDatabaseUrl).toBe('postgres://test');
         expect(stdout.output).toContain('Applied 2 RollbackKit PostgreSQL migration(s):');
         expect(stdout.output).toContain('- 0001_initial_schema:');
         expect(stdout.output).toContain('- 0002_action_run_idempotency:');
-
-        expect(client.queries.some((query) => query.text.trim() === 'BEGIN')).toBe(true);
-        expect(client.queries.some((query) => query.text.trim() === 'COMMIT')).toBe(true);
     });
 
     it('reports already applied PostgreSQL migrations', async () => {
         const stdout = new MemoryWriter();
-        const client = new FakePostgresClient([
-            {
-                id: '0001_initial_schema',
-                applied_at: new Date('2026-01-01T00:00:00.000Z'),
-            },
-            {
-                id: '0002_action_run_idempotency',
-                applied_at: new Date('2026-01-01T00:00:01.000Z'),
-            },
-        ]);
 
         const program = createRollbackKitCliProgram({
             stdout,
             env: {},
-            createPostgresClient: () => client,
+            migratePostgresDatabase: async () =>
+                ({
+                    applied: [],
+                    skipped: [pendingMigration, idempotencyMigration],
+                }) satisfies PostgresMigrationResult,
         });
 
         await program.parseAsync(
@@ -155,12 +87,21 @@ describe('@rollbackkit/cli', () => {
 
     it('checks PostgreSQL migration status with doctor', async () => {
         const stdout = new MemoryWriter();
-        const client = new FakePostgresClient();
+        let receivedDatabaseUrl: string | undefined;
 
         const program = createRollbackKitCliProgram({
             stdout,
             env: {},
-            createPostgresClient: () => client,
+            getPostgresMigrationStatus: async ({ databaseUrl }) => {
+                receivedDatabaseUrl = databaseUrl;
+
+                return {
+                    schemaTableExists: false,
+                    applied: [],
+                    skipped: [],
+                    pending: [pendingMigration, idempotencyMigration],
+                } satisfies PostgresMigrationStatus;
+            },
         });
 
         await program.parseAsync(
@@ -170,24 +111,16 @@ describe('@rollbackkit/cli', () => {
             },
         );
 
-        expect(client.connected).toBe(true);
-        expect(client.ended).toBe(true);
+        expect(receivedDatabaseUrl).toBe('postgres://test');
         expect(stdout.output).toContain('RollbackKit PostgreSQL doctor');
         expect(stdout.output).toContain('Database: connected');
         expect(stdout.output).toContain('Schema: 2 pending migration(s)');
         expect(stdout.output).toContain('- 0001_initial_schema:');
         expect(stdout.output).toContain('- 0002_action_run_idempotency:');
-        expect(
-            client.queries.some((query) =>
-                query.text.includes('CREATE TABLE IF NOT EXISTS rollbackkit_schema_migrations'),
-            ),
-        ).toBe(false);
     });
 
     it('reads database url from environment', async () => {
         const stdout = new MemoryWriter();
-        const client = new FakePostgresClient();
-
         let receivedDatabaseUrl: string | undefined;
 
         const program = createRollbackKitCliProgram({
@@ -195,10 +128,15 @@ describe('@rollbackkit/cli', () => {
             env: {
                 ROLLBACKKIT_DATABASE_URL: 'postgres://env-url',
             },
-            createPostgresClient: (databaseUrl) => {
+            getPostgresMigrationStatus: async ({ databaseUrl }) => {
                 receivedDatabaseUrl = databaseUrl;
 
-                return client;
+                return {
+                    schemaTableExists: false,
+                    applied: [],
+                    skipped: [],
+                    pending: [],
+                } satisfies PostgresMigrationStatus;
             },
         });
 
@@ -215,7 +153,6 @@ describe('@rollbackkit/cli', () => {
         const program = createRollbackKitCliProgram({
             stdout,
             env: {},
-            createPostgresClient: () => new FakePostgresClient(),
         });
 
         await expect(
@@ -227,13 +164,3 @@ describe('@rollbackkit/cli', () => {
         );
     });
 });
-
-function createQueryResult<TResult extends QueryResultRow>(rows: TResult[]): QueryResult<TResult> {
-    return {
-        command: '',
-        rowCount: rows.length,
-        oid: 0,
-        fields: [],
-        rows,
-    };
-}

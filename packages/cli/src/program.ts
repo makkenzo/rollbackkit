@@ -1,6 +1,11 @@
-import { createPostgresMigrationRunner, type PostgresQueryExecutor } from '@rollbackkit/postgres';
+import {
+    getPostgresMigrationStatus,
+    migratePostgresDatabase,
+    type PostgresDatabaseMigrationOptions,
+    type PostgresMigrationResult,
+    type PostgresMigrationStatus,
+} from '@rollbackkit/postgres';
 import { Command } from 'commander';
-import { Client } from 'pg';
 import { resolveDatabaseUrl } from './database-url';
 import type { CliWriter } from './output';
 import { writeLine } from './output';
@@ -8,13 +13,13 @@ import { writeLine } from './output';
 export const rollbackkitCliVersion = '0.0.0';
 export type { CliWriter } from './output';
 
-export interface RollbackKitCliPostgresClient extends PostgresQueryExecutor {
-    connect(): Promise<unknown>;
-    end(): Promise<unknown>;
-}
-
 export interface RollbackKitCliProgramOptions {
-    readonly createPostgresClient?: (databaseUrl: string) => RollbackKitCliPostgresClient;
+    readonly migratePostgresDatabase?: (
+        options: PostgresDatabaseMigrationOptions,
+    ) => Promise<PostgresMigrationResult>;
+    readonly getPostgresMigrationStatus?: (
+        options: PostgresDatabaseMigrationOptions,
+    ) => Promise<PostgresMigrationStatus>;
     readonly stdout?: CliWriter;
     readonly stderr?: CliWriter;
     readonly env?: Record<string, string | undefined>;
@@ -31,7 +36,8 @@ interface PostgresCommandOptions {
 export function createRollbackKitCliProgram(options: RollbackKitCliProgramOptions = {}): Command {
     const stdout = options.stdout ?? process.stdout;
     const env = options.env ?? process.env;
-    const createPostgresClient = options.createPostgresClient ?? createDefaultPostgresClient;
+    const runMigrations = options.migratePostgresDatabase ?? migratePostgresDatabase;
+    const readMigrationStatus = options.getPostgresMigrationStatus ?? getPostgresMigrationStatus;
 
     const program = new Command();
 
@@ -47,30 +53,26 @@ export function createRollbackKitCliProgram(options: RollbackKitCliProgramOption
         .action(async (command: PostgresCommandOptions) => {
             const databaseUrl = resolveDatabaseUrl(command.databaseUrl, env);
 
-            await withPostgresClient(createPostgresClient, databaseUrl, async (client) => {
-                const runner = createPostgresMigrationRunner({
-                    executor: client,
-                });
+            const result = await runMigrations({
+                databaseUrl,
+            });
 
-                const result = await runner.migrate();
-
-                if (result.applied.length === 0) {
-                    writeLine(
-                        stdout,
-                        `RollbackKit PostgreSQL schema is up to date. ${result.skipped.length} migration(s) already applied.`,
-                    );
-                    return;
-                }
-
+            if (result.applied.length === 0) {
                 writeLine(
                     stdout,
-                    `Applied ${result.applied.length} RollbackKit PostgreSQL migration(s):`,
+                    `RollbackKit PostgreSQL schema is up to date. ${result.skipped.length} migration(s) already applied.`,
                 );
+                return;
+            }
 
-                for (const migration of result.applied) {
-                    writeLine(stdout, `- ${migration.id}: ${migration.description}`);
-                }
-            });
+            writeLine(
+                stdout,
+                `Applied ${result.applied.length} RollbackKit PostgreSQL migration(s):`,
+            );
+
+            for (const migration of result.applied) {
+                writeLine(stdout, `- ${migration.id}: ${migration.description}`);
+            }
         });
 
     program
@@ -80,28 +82,24 @@ export function createRollbackKitCliProgram(options: RollbackKitCliProgramOption
         .action(async (command: PostgresCommandOptions) => {
             const databaseUrl = resolveDatabaseUrl(command.databaseUrl, env);
 
-            await withPostgresClient(createPostgresClient, databaseUrl, async (client) => {
-                const runner = createPostgresMigrationRunner({
-                    executor: client,
-                });
-
-                const status = await runner.getMigrationStatus();
-
-                writeLine(stdout, 'RollbackKit PostgreSQL doctor');
-                writeLine(stdout, 'Database: connected');
-                writeLine(stdout, `Applied migrations: ${status.applied.length}`);
-
-                if (status.pending.length === 0) {
-                    writeLine(stdout, 'Schema: up to date');
-                    return;
-                }
-
-                writeLine(stdout, `Schema: ${status.pending.length} pending migration(s)`);
-
-                for (const migration of status.pending) {
-                    writeLine(stdout, `- ${migration.id}: ${migration.description}`);
-                }
+            const status = await readMigrationStatus({
+                databaseUrl,
             });
+
+            writeLine(stdout, 'RollbackKit PostgreSQL doctor');
+            writeLine(stdout, 'Database: connected');
+            writeLine(stdout, `Applied migrations: ${status.applied.length}`);
+
+            if (status.pending.length === 0) {
+                writeLine(stdout, 'Schema: up to date');
+                return;
+            }
+
+            writeLine(stdout, `Schema: ${status.pending.length} pending migration(s)`);
+
+            for (const migration of status.pending) {
+                writeLine(stdout, `- ${migration.id}: ${migration.description}`);
+            }
         });
 
     return program;
@@ -113,26 +111,4 @@ export async function runCli(options: RunCliOptions = {}): Promise<void> {
     await program.parseAsync([...(options.argv ?? process.argv)], {
         from: 'node',
     });
-}
-
-function createDefaultPostgresClient(databaseUrl: string): RollbackKitCliPostgresClient {
-    return new Client({
-        connectionString: databaseUrl,
-    });
-}
-
-async function withPostgresClient<TValue>(
-    createPostgresClient: (databaseUrl: string) => RollbackKitCliPostgresClient,
-    databaseUrl: string,
-    handler: (client: RollbackKitCliPostgresClient) => Promise<TValue>,
-): Promise<TValue> {
-    const client = createPostgresClient(databaseUrl);
-
-    await client.connect();
-
-    try {
-        return await handler(client);
-    } finally {
-        await client.end();
-    }
 }
