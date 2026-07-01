@@ -31,7 +31,7 @@ import {
     mapSnapshotRow,
     type SnapshotRow,
 } from './mappers';
-import type { PostgresQueryExecutor } from './migration-runner';
+import { assertSingleConnectionExecutor, type PostgresQueryExecutor } from './migration-runner';
 import {
     ACTION_RUN_COLUMNS_SQL,
     CONFLICT_COLUMNS_SQL,
@@ -58,8 +58,29 @@ export class PostgresStore implements StorageAdapter {
     readonly #clock: Clock;
 
     constructor(options: PostgresStoreOptions) {
+        assertSingleConnectionExecutor(
+            options.executor,
+            'PostgresStore requires a single PostgreSQL connection executor for transaction-safe storage. Do not pass pg.Pool directly.',
+        );
+
         this.#executor = options.executor;
         this.#clock = options.clock ?? systemClock;
+    }
+
+    async withTransaction<TValue>(handler: () => Promise<TValue>): Promise<TValue> {
+        await this.#executor.query('BEGIN');
+
+        try {
+            const value = await handler();
+
+            await this.#executor.query('COMMIT');
+
+            return value;
+        } catch (error) {
+            await this.#executor.query('ROLLBACK').catch(() => undefined);
+
+            throw error;
+        }
     }
 
     async createActionRun<TInput extends JsonValue = JsonValue>(

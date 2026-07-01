@@ -1,5 +1,7 @@
 export const rollbackkitPostgresVersion = '0.0.0';
 
+export type { PostgresDatabaseMigrationOptions } from './database';
+export { getPostgresMigrationStatus, migratePostgresDatabase } from './database';
 export type {
     AppliedPostgresMigration,
     PostgresMigrationResult,

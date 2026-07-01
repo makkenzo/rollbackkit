@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
 import * as publicApi from '../../src/index';
@@ -99,12 +100,7 @@ describe('@rollbackkit/postgres', () => {
 
     it('plans migration status from an existing schema migrations table', async () => {
         const executor = new FakePostgresExecutor(
-            [
-                {
-                    id: '0001_initial_schema',
-                    applied_at: '2026-01-01T00:00:00.000Z',
-                },
-            ],
+            [createAppliedMigrationRow('0001_initial_schema', '2026-01-01T00:00:00.000Z')],
             {
                 schemaMigrationsTableExists: true,
             },
@@ -118,6 +114,7 @@ describe('@rollbackkit/postgres', () => {
         expect(status.applied).toEqual([
             {
                 id: '0001_initial_schema',
+                checksum: createMigrationChecksum('0001_initial_schema'),
                 appliedAt: new Date('2026-01-01T00:00:00.000Z'),
             },
         ]);
@@ -139,6 +136,7 @@ describe('@rollbackkit/postgres', () => {
                     for (const migration of ROLLBACKKIT_POSTGRES_MIGRATIONS) {
                         this.schemaMigrationRows.push({
                             id: migration.id,
+                            checksum: createMigrationChecksum(migration.id),
                             applied_at: new Date('2026-01-01T00:00:00.000Z'),
                         });
                     }
@@ -168,14 +166,11 @@ describe('@rollbackkit/postgres', () => {
 
     it('skips already applied migrations', async () => {
         const executor = new FakePostgresExecutor([
-            {
-                id: '0001_initial_schema',
-                applied_at: new Date('2026-01-01T00:00:00.000Z'),
-            },
-            {
-                id: '0002_action_run_idempotency',
-                applied_at: new Date('2026-01-01T00:00:01.000Z'),
-            },
+            createAppliedMigrationRow('0001_initial_schema', new Date('2026-01-01T00:00:00.000Z')),
+            createAppliedMigrationRow(
+                '0002_action_run_idempotency',
+                new Date('2026-01-01T00:00:01.000Z'),
+            ),
         ]);
 
         const runner = createPostgresMigrationRunner({ executor });
@@ -192,10 +187,7 @@ describe('@rollbackkit/postgres', () => {
 
     it('reads applied migrations', async () => {
         const executor = new FakePostgresExecutor([
-            {
-                id: '0001_initial_schema',
-                applied_at: '2026-01-01T00:00:00.000Z',
-            },
+            createAppliedMigrationRow('0001_initial_schema', '2026-01-01T00:00:00.000Z'),
         ]);
 
         const runner = createPostgresMigrationRunner({ executor });
@@ -203,9 +195,38 @@ describe('@rollbackkit/postgres', () => {
         await expect(runner.getAppliedMigrations()).resolves.toEqual([
             {
                 id: '0001_initial_schema',
+                checksum: createMigrationChecksum('0001_initial_schema'),
                 appliedAt: new Date('2026-01-01T00:00:00.000Z'),
             },
         ]);
+    });
+
+    it('rejects applied migrations whose checksum no longer matches', async () => {
+        const executor = new FakePostgresExecutor([
+            {
+                id: '0001_initial_schema',
+                checksum: 'sha256:wrong',
+                applied_at: '2026-01-01T00:00:00.000Z',
+            },
+        ]);
+
+        const runner = createPostgresMigrationRunner({ executor });
+
+        await expect(runner.getMigrationStatus()).rejects.toThrow(
+            RollbackKitPostgresMigrationError,
+        );
+    });
+
+    it('rejects pool-like executors for migration transactions', () => {
+        const executor = Object.assign(new FakePostgresExecutor(), {
+            totalCount: 0,
+            idleCount: 0,
+            waitingCount: 0,
+        });
+
+        expect(() => createPostgresMigrationRunner({ executor })).toThrow(
+            'PostgresMigrationRunner requires a single PostgreSQL connection executor',
+        );
     });
 
     it('rejects duplicate migration ids', () => {
@@ -224,3 +245,28 @@ describe('@rollbackkit/postgres', () => {
         ).toThrow(RollbackKitPostgresMigrationError);
     });
 });
+
+function createAppliedMigrationRow(
+    id: string,
+    appliedAt: Date | string,
+): {
+    readonly id: string;
+    readonly checksum: string;
+    readonly applied_at: Date | string;
+} {
+    return {
+        id,
+        checksum: createMigrationChecksum(id),
+        applied_at: appliedAt,
+    };
+}
+
+function createMigrationChecksum(id: string): string {
+    const migration = ROLLBACKKIT_POSTGRES_MIGRATIONS.find((candidate) => candidate.id === id);
+
+    if (migration === undefined) {
+        throw new Error(`Unknown test migration "${id}".`);
+    }
+
+    return `sha256:${createHash('sha256').update(migration.sql).digest('hex')}`;
+}

@@ -31,6 +31,40 @@ describe('PostgresStore action runs', () => {
         expect(store).toBeDefined();
     });
 
+    it('rejects pool-like executors for transaction-safe storage', () => {
+        const executor = Object.assign(new FakePostgresExecutor(), {
+            totalCount: 0,
+            idleCount: 0,
+            waitingCount: 0,
+        });
+
+        expect(() => createPostgresStore({ executor })).toThrow(
+            'PostgresStore requires a single PostgreSQL connection executor',
+        );
+    });
+
+    it('wraps handlers in a transaction', async () => {
+        const executor = new FakePostgresExecutor();
+        const store = createPostgresStore({ executor });
+
+        await expect(store.withTransaction(async () => 'done')).resolves.toBe('done');
+
+        expect(executor.queries.map((query) => query.text.trim())).toEqual(['BEGIN', 'COMMIT']);
+    });
+
+    it('rolls back transaction handlers when they fail', async () => {
+        const executor = new FakePostgresExecutor();
+        const store = createPostgresStore({ executor });
+
+        await expect(
+            store.withTransaction(async () => {
+                throw new Error('handler failed');
+            }),
+        ).rejects.toThrow('handler failed');
+
+        expect(executor.queries.map((query) => query.text.trim())).toEqual(['BEGIN', 'ROLLBACK']);
+    });
+
     it('creates action runs', async () => {
         const now = new Date('2026-01-01T00:00:00.000Z');
         const undoExpiresAt = new Date('2026-01-01T00:01:00.000Z');

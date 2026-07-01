@@ -1,17 +1,25 @@
+import { createHash } from 'node:crypto';
 import type { QueryResult, QueryResultRow } from 'pg';
 import type { RollbackKitPostgresMigration } from './migrations';
 import { ROLLBACKKIT_POSTGRES_MIGRATIONS } from './migrations';
 
 const SCHEMA_MIGRATIONS_TABLE_SQL = `
-CREATE TABLE IF NOT EXISTS rollbackkit_schema_migrations (
-    id text PRIMARY KEY,
-    description text NOT NULL,
-    applied_at timestamptz NOT NULL DEFAULT now()
-);
+	CREATE TABLE IF NOT EXISTS rollbackkit_schema_migrations (
+	    id text PRIMARY KEY,
+	    description text NOT NULL,
+	    checksum text NOT NULL,
+	    applied_at timestamptz NOT NULL DEFAULT now()
+	);
+	`;
+
+const SCHEMA_MIGRATIONS_CHECKSUM_COLUMN_SQL = `
+ALTER TABLE rollbackkit_schema_migrations
+    ADD COLUMN IF NOT EXISTS checksum text;
 `;
 
 interface AppliedMigrationRow extends QueryResultRow {
     readonly id: string;
+    readonly checksum: string | null;
     readonly applied_at: Date | string;
 }
 
@@ -28,6 +36,7 @@ export interface PostgresQueryExecutor {
 
 export interface AppliedPostgresMigration {
     readonly id: string;
+    readonly checksum: string;
     readonly appliedAt: Date;
 }
 
@@ -79,6 +88,11 @@ export class PostgresMigrationRunner {
     readonly #migrations: readonly RollbackKitPostgresMigration[];
 
     constructor(options: PostgresMigrationRunnerOptions) {
+        assertSingleConnectionExecutor(
+            options.executor,
+            'PostgresMigrationRunner requires a single PostgreSQL connection executor for migration transactions. Do not pass pg.Pool directly.',
+        );
+
         this.#executor = options.executor;
         this.#migrations = options.migrations ?? ROLLBACKKIT_POSTGRES_MIGRATIONS;
 
@@ -142,10 +156,10 @@ export class PostgresMigrationRunner {
                 await this.#executor.query(migration.sql);
                 await this.#executor.query(
                     `
-INSERT INTO rollbackkit_schema_migrations (id, description)
-VALUES ($1, $2)
-`,
-                    [migration.id, migration.description],
+	INSERT INTO rollbackkit_schema_migrations (id, description, checksum)
+	VALUES ($1, $2, $3)
+	`,
+                    [migration.id, migration.description, createMigrationChecksum(migration)],
                 );
             }
 
@@ -178,6 +192,7 @@ VALUES ($1, $2)
 
     async #ensureSchemaMigrationsTable(): Promise<void> {
         await this.#executor.query(SCHEMA_MIGRATIONS_TABLE_SQL);
+        await this.#executor.query(SCHEMA_MIGRATIONS_CHECKSUM_COLUMN_SQL);
     }
 
     async #readSchemaMigrationsTableExists(): Promise<boolean> {
@@ -190,13 +205,14 @@ SELECT to_regclass('rollbackkit_schema_migrations')::text AS table_name
 
     async #readAppliedMigrations(): Promise<readonly AppliedPostgresMigration[]> {
         const result = await this.#executor.query<AppliedMigrationRow>(`
-SELECT id, applied_at
-FROM rollbackkit_schema_migrations
-ORDER BY id ASC
-`);
+	SELECT id, checksum, applied_at
+	FROM rollbackkit_schema_migrations
+	ORDER BY id ASC
+	`);
 
         return result.rows.map((row) => ({
             id: row.id,
+            checksum: mapMigrationChecksum(row),
             appliedAt: row.applied_at instanceof Date ? row.applied_at : new Date(row.applied_at),
         }));
     }
@@ -205,6 +221,8 @@ ORDER BY id ASC
         appliedMigrations: readonly AppliedPostgresMigration[],
         schemaTableExists: boolean,
     ): PostgresMigrationStatus {
+        assertAppliedMigrationChecksums(appliedMigrations, this.#migrations);
+
         const appliedIds = new Set(appliedMigrations.map((migration) => migration.id));
 
         return {
@@ -237,4 +255,66 @@ function assertUniqueMigrationIds(migrations: readonly RollbackKitPostgresMigrat
 
         seen.add(migration.id);
     }
+}
+
+export function assertSingleConnectionExecutor(executor: unknown, message: string): void {
+    if (isPoolLikeExecutor(executor)) {
+        throw new RollbackKitPostgresMigrationError(message);
+    }
+}
+
+export function createMigrationChecksum(migration: RollbackKitPostgresMigration): string {
+    return `sha256:${createHash('sha256').update(migration.sql).digest('hex')}`;
+}
+
+function mapMigrationChecksum(row: AppliedMigrationRow): string {
+    if (typeof row.checksum === 'string' && row.checksum.trim() !== '') {
+        return row.checksum;
+    }
+
+    throw new RollbackKitPostgresMigrationError(
+        `Applied RollbackKit PostgreSQL migration "${row.id}" does not have a checksum.`,
+        {
+            migrationId: row.id,
+        },
+    );
+}
+
+function assertAppliedMigrationChecksums(
+    appliedMigrations: readonly AppliedPostgresMigration[],
+    migrations: readonly RollbackKitPostgresMigration[],
+): void {
+    const migrationsById = new Map(migrations.map((migration) => [migration.id, migration]));
+
+    for (const appliedMigration of appliedMigrations) {
+        const migration = migrationsById.get(appliedMigration.id);
+
+        if (migration === undefined) {
+            throw new RollbackKitPostgresMigrationError(
+                `Unknown applied RollbackKit PostgreSQL migration "${appliedMigration.id}".`,
+                {
+                    migrationId: appliedMigration.id,
+                },
+            );
+        }
+
+        const expectedChecksum = createMigrationChecksum(migration);
+
+        if (appliedMigration.checksum !== expectedChecksum) {
+            throw new RollbackKitPostgresMigrationError(
+                `Applied RollbackKit PostgreSQL migration "${appliedMigration.id}" checksum does not match the bundled migration.`,
+                {
+                    migrationId: appliedMigration.id,
+                },
+            );
+        }
+    }
+}
+
+function isPoolLikeExecutor(executor: unknown): boolean {
+    if (typeof executor !== 'object' || executor === null) {
+        return false;
+    }
+
+    return 'totalCount' in executor && 'idleCount' in executor && 'waitingCount' in executor;
 }

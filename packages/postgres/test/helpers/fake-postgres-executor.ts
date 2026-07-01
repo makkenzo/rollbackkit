@@ -24,6 +24,7 @@ export interface RecordedPostgresQuery {
 
 export interface FakeAppliedMigrationRow extends QueryResultRow {
     readonly id: string;
+    readonly checksum?: string;
     readonly applied_at: Date | string;
 }
 
@@ -77,19 +78,18 @@ export class FakePostgresExecutor implements PostgresQueryExecutor {
             return createQueryResult([]);
         }
 
-        if (
-            text.includes('SELECT id, applied_at') &&
-            text.includes('rollbackkit_schema_migrations')
-        ) {
+        if (text.includes('SELECT id') && text.includes('rollbackkit_schema_migrations')) {
             return createQueryResult(this.schemaMigrationRows as unknown as TResult[]);
         }
 
         if (text.includes('INSERT INTO rollbackkit_schema_migrations') && values !== undefined) {
             const id = String(values[0]);
+            const checksum = String(values[2]);
 
             if (!this.schemaMigrationRows.some((row) => row.id === id)) {
                 this.schemaMigrationRows.push({
                     id,
+                    checksum,
                     applied_at: new Date('2026-01-01T00:00:00.000Z'),
                 });
             }
