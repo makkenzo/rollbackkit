@@ -76,6 +76,26 @@ export async function deleteDemoMember(
     workspaceId: string,
     memberId: string,
 ): Promise<DemoMemberRecord | null> {
+    await executor.query(
+        `
+UPDATE demo_projects
+SET owner_member_id = NULL
+WHERE owner_member_id = $1
+  AND workspace_id = $2
+		`,
+        [memberId, workspaceId],
+    );
+
+    await executor.query(
+        `
+UPDATE demo_documents
+SET owner_member_id = NULL
+WHERE owner_member_id = $1
+  AND workspace_id = $2
+		`,
+        [memberId, workspaceId],
+    );
+
     const result = await executor.query<DemoMemberRecord>(
         `
 DELETE FROM demo_members

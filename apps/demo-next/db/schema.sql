@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS demo_members (
     role text NOT NULL CHECK (role IN ('owner', 'admin', 'viewer')),
     created_at timestamptz NOT NULL DEFAULT now(),
 
+    UNIQUE (workspace_id, id),
     UNIQUE (workspace_id, email)
 );
 
@@ -23,11 +24,15 @@ CREATE TABLE IF NOT EXISTS demo_projects (
     id text PRIMARY KEY,
     workspace_id text NOT NULL REFERENCES demo_workspaces(id) ON DELETE CASCADE,
     name text NOT NULL,
-    owner_member_id text REFERENCES demo_members(id) ON DELETE SET NULL,
+    owner_member_id text,
     status text NOT NULL CHECK (status IN ('active', 'archived')),
     archived_at timestamptz,
     updated_at timestamptz NOT NULL DEFAULT now(),
-    created_at timestamptz NOT NULL DEFAULT now()
+    created_at timestamptz NOT NULL DEFAULT now(),
+
+    UNIQUE (workspace_id, id),
+    FOREIGN KEY (workspace_id, owner_member_id)
+        REFERENCES demo_members(workspace_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS demo_projects_workspace_idx
@@ -36,13 +41,19 @@ CREATE INDEX IF NOT EXISTS demo_projects_workspace_idx
 CREATE TABLE IF NOT EXISTS demo_documents (
     id text PRIMARY KEY,
     workspace_id text NOT NULL REFERENCES demo_workspaces(id) ON DELETE CASCADE,
-    project_id text REFERENCES demo_projects(id) ON DELETE SET NULL,
-    owner_member_id text REFERENCES demo_members(id) ON DELETE SET NULL,
+    project_id text,
+    owner_member_id text,
     title text NOT NULL,
     state text NOT NULL CHECK (state IN ('published', 'draft', 'archived')),
     archived_at timestamptz,
     updated_at timestamptz NOT NULL DEFAULT now(),
-    created_at timestamptz NOT NULL DEFAULT now()
+    created_at timestamptz NOT NULL DEFAULT now(),
+
+    UNIQUE (workspace_id, id),
+    FOREIGN KEY (workspace_id, project_id)
+        REFERENCES demo_projects(workspace_id, id),
+    FOREIGN KEY (workspace_id, owner_member_id)
+        REFERENCES demo_members(workspace_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS demo_documents_workspace_idx

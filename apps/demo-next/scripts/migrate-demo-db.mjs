@@ -1,11 +1,10 @@
-import { readDemoSql, withDemoPostgresClient } from './demo-db.mjs';
+import { withDemoPostgresClient } from './demo-db.mjs';
+import { migrateDemoSchema } from './demo-schema-migrations.mjs';
 import { migrateRollbackKitSchema } from './rollbackkit-db.mjs';
 
 await withDemoPostgresClient(async (client) => {
-    const schemaSql = await readDemoSql('db/schema.sql');
-
     await migrateRollbackKitSchema(client);
-    await client.query(schemaSql);
+    await migrateDemoSchema(client);
 
     console.log('RollbackKit and demo database schemas are ready.');
 });
