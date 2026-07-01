@@ -59,8 +59,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build PostgreSQL and CLI packages
+      - name: Build Core, PostgreSQL and CLI packages
         run: |
+          pnpm --filter @rollbackkit/core build
           pnpm --filter @rollbackkit/postgres build
           pnpm --filter @rollbackkit/cli build
 
