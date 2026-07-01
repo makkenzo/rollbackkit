@@ -311,6 +311,16 @@ ROLLBACKKIT_DATABASE_URL="postgres://user:password@localhost:5432/app_database" 
 pnpm --filter @rollbackkit/cli exec node dist/bin.mjs doctor
 ```
 
+Check the demo database flow:
+
+```bash
+ROLLBACKKIT_DEMO_DATABASE_URL="postgres://user:password@localhost:5432/rollbackkit_test" \
+pnpm --filter @rollbackkit/demo-next db:migrate
+
+ROLLBACKKIT_DEMO_DATABASE_URL="postgres://user:password@localhost:5432/rollbackkit_test" \
+pnpm --filter @rollbackkit/demo-next db:reset
+```
+
 ## Troubleshooting
 
 ### Missing database URL
