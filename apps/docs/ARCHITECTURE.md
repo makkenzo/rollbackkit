@@ -175,10 +175,10 @@ different input is rejected.
 ```text
 undo request
   -> load action run
-  -> check status
-  -> check undo window
   -> check permission
   -> acquire lock
+  -> check status
+  -> check undo window
   -> check conflicts
   -> load snapshots
   -> execute undo handler
@@ -203,6 +203,7 @@ The storage adapter should support:
 - record conflict;
 - query action history;
 - enforce idempotency;
+- run transactional execution sections;
 - run locked undo section.
 
 The exact TypeScript interface will be defined in `@rollbackkit/core`.

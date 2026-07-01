@@ -67,7 +67,6 @@ The CLI package provides developer-facing commands.
 
 Initial commands:
 
-- `init`;
 - `migrate`;
 - `doctor`.
 
@@ -76,7 +75,7 @@ It is responsible for:
 - running migrations;
 - checking database connectivity;
 - checking installed schema version;
-- helping users initialize RollbackKit in existing projects.
+- reporting whether the installed RollbackKit PostgreSQL schema is current.
 
 It depends on:
 
@@ -112,7 +111,9 @@ The PostgreSQL root exports:
 
 - `createPostgresStore` and `PostgresStore`;
 - `createPostgresMigrationRunner` and `PostgresMigrationRunner`;
+- `migratePostgresDatabase` and `getPostgresMigrationStatus`;
 - migration runner result/status/options/error types;
+- database migration options type;
 - `PostgresQueryExecutor`;
 - `ROLLBACKKIT_POSTGRES_MIGRATIONS`;
 - `RollbackKitPostgresMigration`;

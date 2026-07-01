@@ -19,7 +19,7 @@ The main product loop is:
 
 ```text
 preview -> execute -> audit -> undo
-````
+```
 
 A user should be able to understand:
 

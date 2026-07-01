@@ -25,7 +25,7 @@ Example local connection string:
 
 ```bash
 postgres://user:password@localhost:5432/app_database
-````
+```
 
 
 Replace it with your own database URL.

@@ -1,0 +1,12 @@
+{
+    "name": "@rollbackkit/docs",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Architecture and setup documentation for RollbackKit.",
+    "type": "module",
+    "scripts": {
+        "build": "node scripts/check-docs.mjs",
+        "lint": "node scripts/check-docs.mjs",
+        "test": "node scripts/check-docs.mjs"
+    }
+}

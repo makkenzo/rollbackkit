@@ -1,9 +1,20 @@
 {
     "$schema": "https://turbo.build/schema.json",
+    "globalDependencies": [
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "tsconfig.base.json",
+        "tsconfig.node.json",
+        "apps/*/tsconfig.json",
+        "packages/*/tsconfig.json",
+        "biome.json",
+        ".changeset/config.json"
+    ],
     "tasks": {
         "build": {
             "dependsOn": ["^build"],
-            "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+            "outputs": ["dist/**", ".next/**", "!.next/cache/**", ".turbo/docs/**"]
         },
         "typecheck": {
             "dependsOn": ["^build"],
