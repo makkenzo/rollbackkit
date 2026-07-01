@@ -175,7 +175,6 @@ The PostgreSQL migration runner stores applied migrations and checksums in `roll
 RollbackKit is not:
 
 - a workflow engine;
-- a Temporal clone;
 - an event sourcing framework;
 - a database backup tool;
 - a low-code automation platform;
@@ -183,45 +182,6 @@ RollbackKit is not:
 
 If an action cannot be safely undone, RollbackKit should make that explicit instead of pretending otherwise.
 
-## Roadmap
-
-### v0
-
-- Core action lifecycle.
-- PostgreSQL adapter.
-- CLI `migrate` and `doctor`.
-- Next.js demo app with app-local integration.
-- Basic docs: install, migrate, first action, undo and troubleshooting.
-- Security baseline.
-- CI/release hygiene.
-
-### v0.x
-
-- React headless primitives.
-- Next.js route/server-action helpers.
-- Conflict handling polish.
-- Side effects model.
-- Partial rollback.
-- Testkit.
-- Common SaaS/admin recipes.
-
-### v1
-
-- Stable public API.
-- Stable storage adapter contract.
-- Stable PostgreSQL migration policy.
-- Complete docs and migration guide.
-- Production readiness checklist.
-
-## Development
-
-```bash
-pnpm install
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
-```
 
 ## License
 
