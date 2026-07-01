@@ -6,7 +6,8 @@ import {
     type PostgresMigrationStatus,
 } from '@rollbackkit/postgres';
 import { Command } from 'commander';
-import { resolveDatabaseUrl } from './database-url';
+import { loadDatabaseConfig } from './database-url';
+import { writeCliError } from './error-presenter';
 import type { CliWriter } from './output';
 import { writeLine } from './output';
 
@@ -33,25 +34,40 @@ interface PostgresCommandOptions {
     readonly databaseUrl?: string;
 }
 
+interface GlobalCommandOptions {
+    readonly verbose?: boolean;
+}
+
 export function createRollbackKitCliProgram(options: RollbackKitCliProgramOptions = {}): Command {
     const stdout = options.stdout ?? process.stdout;
+    const stderr = options.stderr ?? process.stderr;
     const env = options.env ?? process.env;
     const runMigrations = options.migratePostgresDatabase ?? migratePostgresDatabase;
     const readMigrationStatus = options.getPostgresMigrationStatus ?? getPostgresMigrationStatus;
 
     const program = new Command();
 
+    program.configureOutput({
+        writeOut: (text) => {
+            stdout.write(text);
+        },
+        writeErr: (text) => {
+            stderr.write(text);
+        },
+    });
+
     program
         .name('rollbackkit')
         .description('CLI for RollbackKit migrations and diagnostics.')
-        .version(rollbackkitCliVersion);
+        .version(rollbackkitCliVersion)
+        .option('--verbose', 'Show stack traces and nested error causes.');
 
     program
         .command('migrate')
         .description('Apply RollbackKit PostgreSQL migrations.')
         .option('--database-url <url>', 'PostgreSQL connection string.')
         .action(async (command: PostgresCommandOptions) => {
-            const databaseUrl = resolveDatabaseUrl(command.databaseUrl, env);
+            const { databaseUrl } = loadDatabaseConfig(command.databaseUrl, env);
 
             const result = await runMigrations({
                 databaseUrl,
@@ -80,7 +96,7 @@ export function createRollbackKitCliProgram(options: RollbackKitCliProgramOption
         .description('Check RollbackKit PostgreSQL connectivity and migration status.')
         .option('--database-url <url>', 'PostgreSQL connection string.')
         .action(async (command: PostgresCommandOptions) => {
-            const databaseUrl = resolveDatabaseUrl(command.databaseUrl, env);
+            const { databaseUrl } = loadDatabaseConfig(command.databaseUrl, env);
 
             const status = await readMigrationStatus({
                 databaseUrl,
@@ -88,6 +104,10 @@ export function createRollbackKitCliProgram(options: RollbackKitCliProgramOption
 
             writeLine(stdout, 'RollbackKit PostgreSQL doctor');
             writeLine(stdout, 'Database: connected');
+            writeLine(
+                stdout,
+                `Migration table: ${status.schemaTableExists ? 'present' : 'missing'}`,
+            );
             writeLine(stdout, `Applied migrations: ${status.applied.length}`);
 
             if (status.pending.length === 0) {
@@ -105,10 +125,25 @@ export function createRollbackKitCliProgram(options: RollbackKitCliProgramOption
     return program;
 }
 
-export async function runCli(options: RunCliOptions = {}): Promise<void> {
+export async function runCli(options: RunCliOptions = {}): Promise<number> {
+    const stderr = options.stderr ?? process.stderr;
     const program = createRollbackKitCliProgram(options);
 
-    await program.parseAsync([...(options.argv ?? process.argv)], {
-        from: 'node',
-    });
+    try {
+        await program.parseAsync([...(options.argv ?? process.argv)], {
+            from: 'node',
+        });
+
+        return 0;
+    } catch (error) {
+        writeCliError(stderr, error, {
+            verbose: getVerboseFlag(program, options.argv ?? process.argv),
+        });
+
+        return 1;
+    }
+}
+
+function getVerboseFlag(program: Command, argv: readonly string[]): boolean {
+    return (program.opts<GlobalCommandOptions>().verbose ?? argv.includes('--verbose')) === true;
 }

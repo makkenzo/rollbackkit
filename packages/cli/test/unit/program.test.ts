@@ -5,6 +5,7 @@ import {
     type CliWriter,
     createRollbackKitCliProgram,
     rollbackkitCliVersion,
+    runCli,
 } from '../../src/program';
 
 class MemoryWriter implements CliWriter {
@@ -114,6 +115,7 @@ describe('@rollbackkit/cli', () => {
         expect(receivedDatabaseUrl).toBe('postgres://test');
         expect(stdout.output).toContain('RollbackKit PostgreSQL doctor');
         expect(stdout.output).toContain('Database: connected');
+        expect(stdout.output).toContain('Migration table: missing');
         expect(stdout.output).toContain('Schema: 2 pending migration(s)');
         expect(stdout.output).toContain('- 0001_initial_schema:');
         expect(stdout.output).toContain('- 0002_action_run_idempotency:');
@@ -160,6 +162,24 @@ describe('@rollbackkit/cli', () => {
                 from: 'node',
             }),
         ).rejects.toThrow(
+            'Missing PostgreSQL database URL. Pass --database-url or set ROLLBACKKIT_DATABASE_URL / DATABASE_URL.',
+        );
+    });
+
+    it('writes top-level errors to injected stderr and returns a non-zero exit code', async () => {
+        const stdout = new MemoryWriter();
+        const stderr = new MemoryWriter();
+
+        const exitCode = await runCli({
+            argv: ['node', 'rollbackkit', 'doctor'],
+            stdout,
+            stderr,
+            env: {},
+        });
+
+        expect(exitCode).toBe(1);
+        expect(stdout.output).toBe('');
+        expect(stderr.output).toContain(
             'Missing PostgreSQL database URL. Pass --database-url or set ROLLBACKKIT_DATABASE_URL / DATABASE_URL.',
         );
     });
