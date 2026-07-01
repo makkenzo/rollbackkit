@@ -1,28 +1,52 @@
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const docsRoot = new URL('..', import.meta.url);
-const markdownFiles = await findMarkdownFiles(docsRoot);
-const errors = [];
+export const docsRoot = new URL('..', import.meta.url);
 
-for (const fileUrl of markdownFiles) {
-    const source = await readFile(fileUrl, 'utf8');
-    errors.push(...checkMarkdownFile(fileUrl, source));
+const isDirectRun = process.argv[1] === fileURLToPath(import.meta.url);
+
+if (isDirectRun) {
+    try {
+        await checkDocs({
+            checkLinks: process.argv.includes('--links'),
+        });
+    } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+    }
 }
 
-if (errors.length > 0) {
-    console.error(errors.join('\n'));
-    process.exit(1);
+export async function checkDocs(options = {}) {
+    const markdownFiles = await findMarkdownFiles(docsRoot);
+    const markdownPathnames = new Set(markdownFiles.map((fileUrl) => fileUrl.pathname));
+    const errors = [];
+
+    for (const fileUrl of markdownFiles) {
+        const source = await readFile(fileUrl, 'utf8');
+        errors.push(
+            ...checkMarkdownFile(fileUrl, source, {
+                checkLinks: options.checkLinks === true,
+                markdownPathnames,
+            }),
+        );
+    }
+
+    if (errors.length > 0) {
+        throw new Error(errors.join('\n'));
+    }
+
+    if (options.log !== false) {
+        console.log(`Checked ${markdownFiles.length} RollbackKit docs file(s).`);
+    }
+
+    return {
+        checkedFiles: markdownFiles.length,
+        files: markdownFiles.map((fileUrl) => relative(process.cwd(), fileURLToPath(fileUrl))),
+    };
 }
 
-if (process.env.npm_lifecycle_event === 'build') {
-    await writeBuildMarker(markdownFiles.length);
-}
-
-console.log(`Checked ${markdownFiles.length} RollbackKit docs file(s).`);
-
-async function findMarkdownFiles(directoryUrl) {
+export async function findMarkdownFiles(directoryUrl) {
     const entries = await readdir(directoryUrl, { withFileTypes: true });
     const files = [];
 
@@ -46,7 +70,7 @@ async function findMarkdownFiles(directoryUrl) {
     return files.sort((first, second) => first.pathname.localeCompare(second.pathname));
 }
 
-function checkMarkdownFile(fileUrl, source) {
+function checkMarkdownFile(fileUrl, source, options) {
     const filePath = relative(process.cwd(), fileURLToPath(fileUrl));
     const fileErrors = [];
     let openFenceLine = null;
@@ -75,15 +99,48 @@ function checkMarkdownFile(fileUrl, source) {
         fileErrors.push(`${filePath}:${openFenceLine}: code fence is not closed.`);
     }
 
+    if (options.checkLinks) {
+        fileErrors.push(...checkMarkdownLinks(fileUrl, source, options.markdownPathnames));
+    }
+
     return fileErrors;
 }
 
-async function writeBuildMarker(checkedFiles) {
-    const outputDirectory = new URL('.turbo/docs/', docsRoot);
+function checkMarkdownLinks(fileUrl, source, markdownPathnames) {
+    const filePath = relative(process.cwd(), fileURLToPath(fileUrl));
+    const fileErrors = [];
+    const linkPattern = /\[[^\]]+\]\(([^)]+)\)/g;
+    let match;
 
-    await mkdir(outputDirectory, { recursive: true });
-    await writeFile(
-        new URL('check.json', outputDirectory),
-        `${JSON.stringify({ checkedFiles }, null, 4)}\n`,
+    while ((match = linkPattern.exec(source)) !== null) {
+        const target = match[1]?.trim();
+
+        if (target === undefined || target === '' || isExternalOrAnchorLink(target)) {
+            continue;
+        }
+
+        const targetWithoutHash = target.split('#')[0];
+
+        if (targetWithoutHash === undefined || targetWithoutHash === '') {
+            continue;
+        }
+
+        const targetUrl = new URL(targetWithoutHash, fileUrl);
+
+        if (!markdownPathnames.has(targetUrl.pathname)) {
+            const lineNumber = source.slice(0, match.index).split(/\r?\n/).length;
+            fileErrors.push(`${filePath}:${lineNumber}: missing markdown link target ${target}.`);
+        }
+    }
+
+    return fileErrors;
+}
+
+function isExternalOrAnchorLink(target) {
+    return (
+        target.startsWith('#') ||
+        target.startsWith('http://') ||
+        target.startsWith('https://') ||
+        target.startsWith('mailto:')
     );
 }
