@@ -124,8 +124,78 @@ internal implementation details.
 
 ### `@rollbackkit/cli`
 
-The CLI package is primarily a binary package. Its root export is limited to
-`rollbackkitCliVersion`; command construction and process wiring stay internal to the package.
+The CLI package is primarily a binary package. Its root exports are:
+
+- `createRollbackKitCliProgram`;
+- `runCli`;
+- `rollbackkitCliVersion`;
+- command construction and writer option types.
+
+The root exports are available for embedding and test harnesses. The CLI command surface remains
+the primary public contract.
+
+## Stability policy before v1
+
+RollbackKit is still pre-v1, but several contracts are intentionally stable enough for product UI
+and API integrations.
+
+Stable through v0:
+
+- package root exports listed in this document, except entries explicitly listed as experimental
+  below;
+- core lifecycle request/result contracts;
+- storage adapter contracts needed to implement a non-PostgreSQL adapter;
+- core error code string values;
+- PostgreSQL migration runner status/result shapes;
+- CLI command names, stdout/stderr split and the `0` success / `1` failure exit-code convention.
+
+Experimental until v1:
+
+- imports from non-root package source modules;
+- CLI embedding helpers such as `createRollbackKitCliProgram`, `runCli` and their option types;
+- PostgreSQL row shapes, mapper functions, id helpers and individual migration constants;
+- demo app routes, scripts, data-access helpers and UI composition;
+- generated `dist/*` file names and bundle structure;
+- future `@rollbackkit/react`, `@rollbackkit/next` and `@rollbackkit/testkit` APIs;
+- future advanced conflict, side-effect and retention APIs.
+
+Experimental APIs may change during v0 with a changelog entry or changeset when the change affects
+published packages. If a symbol is not exported from a package root, treat it as internal by default.
+
+## Error code contract
+
+`RollbackKitErrorCode` values from `@rollbackkit/core` are UI/API-facing string contracts. Consumers
+may branch on `error.code` and serialize `RollbackKitError#toJSON()` responses across process
+boundaries.
+
+Current stable core error codes:
+
+- `ACTION_NOT_FOUND`;
+- `ACTION_ALREADY_REGISTERED`;
+- `ACTION_INPUT_INVALID`;
+- `ACTION_PERMISSION_DENIED`;
+- `ACTION_EXECUTION_FAILED`;
+- `ACTION_UNDO_FAILED`;
+- `ACTION_NOT_UNDOABLE`;
+- `ACTION_ALREADY_UNDONE`;
+- `ACTION_UNDO_EXPIRED`;
+- `ACTION_CONFLICT`;
+- `IDEMPOTENCY_CONFLICT`;
+- `SNAPSHOT_NOT_FOUND`;
+- `STORAGE_ERROR`.
+
+Policy:
+
+- existing error code string values must not be renamed or removed in v0 without an explicit
+  migration note and changeset;
+- new error codes may be added in v0 minor releases;
+- `message` is the default developer-readable message and can be surfaced by simple integrations;
+- product UI should prefer mapping `code` to localized copy;
+- `details` is structured diagnostic data, not a stable copy contract;
+- `cause`, stack traces and PostgreSQL driver messages are never UI/API contracts.
+
+PostgreSQL migration errors use `RollbackKitPostgresMigrationError` with a stable error `name` and
+optional `migrationId`. They are developer/CLI-facing diagnostics, not product-action error codes.
 
 ## Dependency direction
 
