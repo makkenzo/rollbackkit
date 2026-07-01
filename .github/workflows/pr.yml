@@ -4,9 +4,31 @@ on:
   pull_request:
     branches:
       - master
+    paths:
+      - '.github/workflows/pr.yml'
+      - 'apps/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'turbo.json'
+      - 'tsconfig*.json'
+      - 'biome.json'
+      - 'biome.jsonc'
   push:
     branches:
       - master
+    paths:
+      - '.github/workflows/pr.yml'
+      - 'apps/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'turbo.json'
+      - 'tsconfig*.json'
+      - 'biome.json'
+      - 'biome.jsonc'
 
 permissions:
   contents: read

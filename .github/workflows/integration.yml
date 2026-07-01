@@ -1,12 +1,33 @@
 name: Integration
 
 on:
+  workflow_dispatch:
   pull_request:
     branches:
       - master
+    paths:
+      - '.github/workflows/integration.yml'
+      - 'packages/core/**'
+      - 'packages/postgres/**'
+      - 'packages/cli/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'turbo.json'
+      - 'tsconfig*.json'
   push:
     branches:
       - master
+    paths:
+      - '.github/workflows/integration.yml'
+      - 'packages/core/**'
+      - 'packages/postgres/**'
+      - 'packages/cli/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'turbo.json'
+      - 'tsconfig*.json'
 
 permissions:
   contents: read
