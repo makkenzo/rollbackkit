@@ -14,12 +14,14 @@ instead of the minimal first action.
   and a conflict check before undo.
 - [Remove Workspace Member With Undo](./REMOVE_WORKSPACE_MEMBER.md): remove a member, snapshot owned
   relations and restore membership only when the workspace state is still safe.
+- [Conflict Detection](./CONFLICT_DETECTION.md): block unsafe undo, record conflict details and
+  return a UI/API-safe reason.
 
 ## Next Recipes
 
 The next recipe set should cover document archive, bulk import rollback, partial rollback with an
-email side effect, irreversible action warnings, conflict detection, multi-tenant setup, idempotency
-keys, custom permissions, action-history UI, undo toast behavior and cleanup of expired snapshots.
+email side effect, irreversible action warnings, multi-tenant setup, idempotency keys, custom
+permissions, action-history UI, undo toast behavior and cleanup of expired snapshots.
 
 ## Related Pages
 

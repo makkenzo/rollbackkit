@@ -216,3 +216,4 @@ details.
 - [Soft Delete With Undo](./recipes/SOFT_DELETE_WITH_UNDO.md)
 - [Change User Role Safely](./recipes/CHANGE_USER_ROLE.md)
 - [Remove Workspace Member With Undo](./recipes/REMOVE_WORKSPACE_MEMBER.md)
+- [Conflict Detection](./recipes/CONFLICT_DETECTION.md)

@@ -239,6 +239,7 @@ Planned demo scenarios include document archive, customer import rollback, confl
 - [Soft delete with undo](./apps/docs/recipes/SOFT_DELETE_WITH_UNDO.md)
 - [Change user role safely](./apps/docs/recipes/CHANGE_USER_ROLE.md)
 - [Remove workspace member with undo](./apps/docs/recipes/REMOVE_WORKSPACE_MEMBER.md)
+- [Conflict detection](./apps/docs/recipes/CONFLICT_DETECTION.md)
 
 ## PostgreSQL Migrations
 
