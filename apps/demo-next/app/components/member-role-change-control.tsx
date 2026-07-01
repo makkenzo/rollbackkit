@@ -1,12 +1,9 @@
 'use client';
 
-import type { PreviewResult } from '@rollbackkit/core';
-import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
-
 import { executeMemberRoleChange, previewMemberRoleChange } from '../actions/member-change-role';
-import { ActionPreviewDialog, type ActionPreviewError } from './action-preview-dialog';
+import { ActionPreviewDialog } from './action-preview-dialog';
 import { createDemoIdempotencyKey } from './demo-idempotency-key';
+import { usePreviewableDemoAction } from './use-previewable-demo-action';
 
 type DemoMemberRole = 'Owner' | 'Admin' | 'Viewer';
 type EditableMemberRole = 'admin' | 'viewer';
@@ -22,110 +19,58 @@ export function MemberRoleChangeControl({
     memberName,
     role,
 }: MemberRoleChangeControlProps) {
-    const router = useRouter();
-    const [isPending, startTransition] = useTransition();
-
-    const [isDialogOpen, setIsDialogOpen] = useState(false);
-    const [preview, setPreview] = useState<PreviewResult | null>(null);
-    const [error, setError] = useState<ActionPreviewError | null>(null);
-    const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
-
     const targetRole = getTargetRole(role);
-    const isBusy = isPending;
-
-    function openPreview() {
-        const nextRole = targetRole;
-
-        if (nextRole === null) {
-            return;
-        }
-
-        setError(null);
-        setPreview(null);
-        setIdempotencyKey(createDemoIdempotencyKey(`member.change_role:${memberId}:${nextRole}`));
-        setIsDialogOpen(true);
-
-        startTransition(async () => {
-            const response = await previewMemberRoleChange(memberId, nextRole);
-
-            if (!response.ok) {
-                setError(response.error);
-                return;
-            }
-
-            setPreview(response.data);
-        });
-    }
-
-    function closeDialog() {
-        if (isBusy) {
-            return;
-        }
-
-        setIsDialogOpen(false);
-        setPreview(null);
-        setError(null);
-        setIdempotencyKey(null);
-    }
-
-    function changeRole() {
-        const nextRole = targetRole;
-
-        if (nextRole === null) {
-            return;
-        }
-
-        setError(null);
-
-        startTransition(async () => {
-            const requestId =
-                idempotencyKey ??
-                createDemoIdempotencyKey(`member.change_role:${memberId}:${nextRole}`);
-
-            setIdempotencyKey(requestId);
-
-            const response = await executeMemberRoleChange(memberId, nextRole, requestId);
-
-            if (!response.ok) {
-                setError(response.error);
-                return;
-            }
-
-            setIsDialogOpen(false);
-            setPreview(null);
-            setIdempotencyKey(null);
-            router.refresh();
-        });
-    }
+    const action = usePreviewableDemoAction({
+        createIdempotencyKey: () =>
+            createDemoIdempotencyKey(`member.change_role:${memberId}:${targetRole ?? 'none'}`),
+        preview: () =>
+            targetRole === null
+                ? Promise.resolve({
+                      ok: false,
+                      error: {
+                          message: 'Owner role cannot be changed.',
+                      },
+                  })
+                : previewMemberRoleChange(memberId, targetRole),
+        execute: (requestId) =>
+            targetRole === null
+                ? Promise.resolve({
+                      ok: false,
+                      error: {
+                          message: 'Owner role cannot be changed.',
+                      },
+                  })
+                : executeMemberRoleChange(memberId, targetRole, requestId),
+    });
 
     return (
         <div className="project-action-cell">
             <button
                 className="button secondary"
-                disabled={targetRole === null || isBusy}
+                disabled={targetRole === null || action.isBusy}
                 type="button"
-                onClick={openPreview}
+                onClick={action.openPreview}
             >
                 {targetRole === null ? 'Owner' : `Make ${formatEditableRole(targetRole)}`}
             </button>
 
-            {isDialogOpen ? (
+            {action.isDialogOpen ? (
                 <ActionPreviewDialog
                     confirmDisabled={targetRole === null}
                     confirmLabel="Change role"
-                    error={error}
+                    error={action.error}
                     fallbackTitle={`Change ${memberName} role`}
                     id="member-role-dialog"
-                    isBusy={isBusy}
-                    preview={preview}
-                    onCancel={closeDialog}
-                    onConfirm={changeRole}
+                    isBusy={action.isBusy}
+                    preview={action.preview}
+                    onCancel={action.closeDialog}
+                    onConfirm={action.confirm}
                 />
             ) : null}
 
-            {error !== null && !isDialogOpen ? (
+            {action.error !== null && !action.isDialogOpen ? (
                 <p className="inline-error" role="alert">
-                    {error.message}
+                    {action.error.message}
                 </p>
             ) : null}
         </div>

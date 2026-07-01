@@ -1,12 +1,9 @@
 'use client';
 
-import type { PreviewResult } from '@rollbackkit/core';
-import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
-
 import { executeProjectArchive, previewProjectArchive } from '../actions/project-archive';
-import { ActionPreviewDialog, type ActionPreviewError } from './action-preview-dialog';
+import { ActionPreviewDialog } from './action-preview-dialog';
 import { createDemoIdempotencyKey } from './demo-idempotency-key';
+import { usePreviewableDemoAction } from './use-previewable-demo-action';
 
 interface ProjectArchiveControlProps {
     readonly projectId: string;
@@ -19,96 +16,40 @@ export function ProjectArchiveControl({
     projectName,
     status,
 }: ProjectArchiveControlProps) {
-    const router = useRouter();
-    const [isPending, startTransition] = useTransition();
-
-    const [isDialogOpen, setIsDialogOpen] = useState(false);
-    const [preview, setPreview] = useState<PreviewResult | null>(null);
-    const [error, setError] = useState<ActionPreviewError | null>(null);
-    const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
-
     const isArchived = status === 'Archived';
-    const isBusy = isPending;
-
-    function openPreview() {
-        setError(null);
-        setPreview(null);
-        setIdempotencyKey(createDemoIdempotencyKey(`project.archive:${projectId}`));
-        setIsDialogOpen(true);
-
-        startTransition(async () => {
-            const response = await previewProjectArchive(projectId);
-
-            if (!response.ok) {
-                setError(response.error);
-                return;
-            }
-
-            setPreview(response.data);
-        });
-    }
-
-    function closeDialog() {
-        if (isBusy) {
-            return;
-        }
-
-        setIsDialogOpen(false);
-        setPreview(null);
-        setError(null);
-        setIdempotencyKey(null);
-    }
-
-    function archiveProject() {
-        setError(null);
-
-        startTransition(async () => {
-            const requestId =
-                idempotencyKey ?? createDemoIdempotencyKey(`project.archive:${projectId}`);
-
-            setIdempotencyKey(requestId);
-
-            const response = await executeProjectArchive(projectId, requestId);
-
-            if (!response.ok) {
-                setError(response.error);
-                return;
-            }
-
-            setIsDialogOpen(false);
-            setPreview(null);
-            setIdempotencyKey(null);
-            router.refresh();
-        });
-    }
+    const action = usePreviewableDemoAction({
+        createIdempotencyKey: () => createDemoIdempotencyKey(`project.archive:${projectId}`),
+        preview: () => previewProjectArchive(projectId),
+        execute: (requestId) => executeProjectArchive(projectId, requestId),
+    });
 
     return (
         <div className="project-action-cell">
             <button
                 className="button secondary"
-                disabled={isArchived || isBusy}
+                disabled={isArchived || action.isBusy}
                 type="button"
-                onClick={openPreview}
+                onClick={action.openPreview}
             >
                 {isArchived ? 'Archived' : 'Archive'}
             </button>
 
-            {isDialogOpen ? (
+            {action.isDialogOpen ? (
                 <ActionPreviewDialog
                     confirmLabel="Archive project"
-                    error={error}
+                    error={action.error}
                     fallbackTitle={`Archive ${projectName}`}
                     id="project-archive-dialog"
-                    isBusy={isBusy}
-                    preview={preview}
-                    onCancel={closeDialog}
-                    onConfirm={archiveProject}
+                    isBusy={action.isBusy}
+                    preview={action.preview}
+                    onCancel={action.closeDialog}
+                    onConfirm={action.confirm}
                 />
             ) : null}
 
-            {error !== null && !isDialogOpen ? (
+            {action.error !== null && !action.isDialogOpen ? (
                 <p className="inline-error" role="alert">
-                    {error.message}
+                    {action.error.message}
                 </p>
             ) : null}
         </div>

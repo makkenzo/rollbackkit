@@ -108,16 +108,11 @@ WHERE id = $1
         expect(executed.data).toMatchObject({
             name: 'project.archive',
             status: 'completed',
-            tenantId: 'workspace_acme',
+            canUndo: true,
             target: {
                 id: 'project_server_action_archive_target',
                 type: 'project',
                 label: 'Server Action Archive Target',
-            },
-            result: {
-                projectId: 'project_server_action_archive_target',
-                status: 'archived',
-                archivedAt: expect.any(String),
             },
         });
 
@@ -136,11 +131,7 @@ WHERE id = $1
         expect(undone.data).toMatchObject({
             id: executed.data.id,
             status: 'undone',
-            undoResult: {
-                projectId: 'project_server_action_archive_target',
-                status: 'active',
-                archivedAt: null,
-            },
+            canUndo: false,
         });
 
         await expect(readProjectStatus('project_server_action_archive_target')).resolves.toBe(
@@ -156,9 +147,6 @@ WHERE id = $1
             error: {
                 code: 'ACTION_NOT_FOUND',
                 message: 'Project "missing_project" was not found.',
-                details: {
-                    projectId: 'missing_project',
-                },
             },
         });
     });

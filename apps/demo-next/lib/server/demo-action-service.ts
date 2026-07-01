@@ -1,55 +1,9 @@
 import 'server-only';
 
-import {
-    type ActionRun,
-    isRollbackKitError,
-    type JsonObject,
-    type JsonValue,
-} from '@rollbackkit/core';
+import { type ActionRun, isRollbackKitError } from '@rollbackkit/core';
+import type { DemoActionError, DemoActionResponse, DemoActionRunDto } from '../demo-action-types';
 
-export type DemoActionResponse<TData> =
-    | {
-          readonly ok: true;
-          readonly data: TData;
-      }
-    | {
-          readonly ok: false;
-          readonly error: DemoActionError;
-      };
-
-export interface DemoActionError {
-    readonly code?: string;
-    readonly message: string;
-    readonly details?: JsonObject;
-}
-
-export interface DemoActionRunDto {
-    readonly id: string;
-    readonly name: string;
-    readonly status: string;
-    readonly createdAt: string;
-    readonly actor: ActionRun['actor'];
-    readonly tenantId?: string;
-    readonly target?: {
-        readonly id: string;
-        readonly type: string;
-        readonly label?: string;
-        readonly metadata?: JsonObject;
-    };
-    readonly executedAt?: string;
-    readonly undoExpiresAt?: string;
-    readonly undoStartedAt?: string;
-    readonly undoneAt?: string;
-    readonly undoneBy?: ActionRun['actor'];
-    readonly result?: JsonValue;
-    readonly undoResult?: JsonValue;
-    readonly error?: {
-        readonly code: string;
-        readonly message: string;
-        readonly details?: JsonObject;
-    };
-    readonly metadata?: JsonObject;
-}
+export type { DemoActionError, DemoActionResponse, DemoActionRunDto };
 
 export async function runDemoAction<TData>(
     handler: () => Promise<TData>,
@@ -72,10 +26,20 @@ export function serializeActionRun(run: ActionRun): DemoActionRunDto {
         id: run.id,
         name: run.name,
         status: run.status,
-        actor: run.actor,
         createdAt: run.createdAt.toISOString(),
-        ...(run.tenantId === undefined ? {} : { tenantId: run.tenantId }),
-        ...(run.target === undefined ? {} : { target: run.target }),
+        canUndo:
+            run.status === 'completed' &&
+            run.reversibility.undoable &&
+            run.undoExpiresAt !== undefined,
+        ...(run.target === undefined
+            ? {}
+            : {
+                  target: {
+                      id: run.target.id,
+                      type: run.target.type,
+                      ...(run.target.label === undefined ? {} : { label: run.target.label }),
+                  },
+              }),
         ...(run.executedAt === undefined ? {} : { executedAt: run.executedAt.toISOString() }),
         ...(run.undoExpiresAt === undefined
             ? {}
@@ -84,11 +48,6 @@ export function serializeActionRun(run: ActionRun): DemoActionRunDto {
             ? {}
             : { undoStartedAt: run.undoStartedAt.toISOString() }),
         ...(run.undoneAt === undefined ? {} : { undoneAt: run.undoneAt.toISOString() }),
-        ...(run.undoneBy === undefined ? {} : { undoneBy: run.undoneBy }),
-        ...(run.result === undefined ? {} : { result: run.result }),
-        ...(run.undoResult === undefined ? {} : { undoResult: run.undoResult }),
-        ...(run.error === undefined ? {} : { error: run.error }),
-        ...(run.metadata === undefined ? {} : { metadata: run.metadata }),
     };
 }
 
@@ -97,7 +56,6 @@ function serializeActionError(error: unknown): DemoActionError {
         return {
             code: error.code,
             message: error.message,
-            ...(error.details === undefined ? {} : { details: error.details }),
         };
     }
 

@@ -6,17 +6,18 @@ import {
     runDemoAction,
     serializeActionRun,
 } from './demo-action-service';
-import { DEMO_ACTOR } from './demo-request-context';
+import type { DemoRequestContext } from './demo-request-context';
 import { withDemoRollbackKit } from './rollbackkit';
 
 export async function undoDemoActionRun(
     actionRunId: string,
+    context: DemoRequestContext,
 ): Promise<DemoActionResponse<DemoActionRunDto>> {
     return runDemoAction(async () =>
         withDemoRollbackKit(async ({ rollbackkit }) => {
             const run = await rollbackkit.undo({
                 actionRunId,
-                actor: DEMO_ACTOR,
+                actor: context.actor,
             });
 
             return serializeActionRun(run);

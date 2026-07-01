@@ -119,18 +119,11 @@ WHERE id = $1
         expect(executed.data).toMatchObject({
             name: 'member.remove',
             status: 'completed',
-            tenantId: 'workspace_acme',
+            canUndo: true,
             target: {
                 id: 'member_server_action_remove_target',
                 type: 'member',
                 label: 'Server Action Remove Target',
-            },
-            result: {
-                memberId: 'member_server_action_remove_target',
-                status: 'removed',
-                role: 'admin',
-                projectOwnerLinksCleared: 1,
-                documentOwnerLinksCleared: 1,
             },
         });
 
@@ -149,13 +142,7 @@ WHERE id = $1
         expect(undone.data).toMatchObject({
             id: executed.data.id,
             status: 'undone',
-            undoResult: {
-                memberId: 'member_server_action_remove_target',
-                status: 'restored',
-                role: 'admin',
-                projectOwnerLinksRestored: 1,
-                documentOwnerLinksRestored: 1,
-            },
+            canUndo: false,
         });
 
         await expect(readMemberExists('member_server_action_remove_target')).resolves.toBe(true);
@@ -176,10 +163,6 @@ WHERE id = $1
                 code: 'ACTION_CONFLICT',
                 message:
                     'Member "member_ada" cannot be removed safely: Owner members cannot be removed in the demo action.',
-                details: {
-                    memberId: 'member_ada',
-                    reason: 'Owner members cannot be removed in the demo action.',
-                },
             },
         });
     });

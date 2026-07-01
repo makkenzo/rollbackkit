@@ -102,16 +102,11 @@ WHERE id = $1
         expect(executed.data).toMatchObject({
             name: 'member.change_role',
             status: 'completed',
-            tenantId: 'workspace_acme',
+            canUndo: true,
             target: {
                 id: 'member_server_action_role_target',
                 type: 'member',
                 label: 'Server Action Role Target',
-            },
-            result: {
-                memberId: 'member_server_action_role_target',
-                role: 'admin',
-                previousRole: 'viewer',
             },
         });
 
@@ -128,11 +123,7 @@ WHERE id = $1
         expect(undone.data).toMatchObject({
             id: executed.data.id,
             status: 'undone',
-            undoResult: {
-                memberId: 'member_server_action_role_target',
-                role: 'viewer',
-                previousRole: 'admin',
-            },
+            canUndo: false,
         });
 
         await expect(readMemberRole('member_server_action_role_target')).resolves.toBe('viewer');
@@ -146,9 +137,6 @@ WHERE id = $1
             error: {
                 code: 'ACTION_NOT_FOUND',
                 message: 'Member "missing_member" was not found.',
-                details: {
-                    memberId: 'missing_member',
-                },
             },
         });
     });

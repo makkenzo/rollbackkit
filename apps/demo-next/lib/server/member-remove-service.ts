@@ -9,20 +9,21 @@ import {
     runDemoAction,
     serializeActionRun,
 } from './demo-action-service';
-import { DEMO_ACTOR, DEMO_TENANT_ID, DEMO_WORKSPACE_ID } from './demo-request-context';
+import type { DemoRequestContext } from './demo-request-context';
 import { withDemoRollbackKit } from './rollbackkit';
 
 export async function previewMemberRemove(
     memberId: string,
+    context: DemoRequestContext,
 ): Promise<DemoActionResponse<PreviewResult>> {
     return runDemoAction(async () =>
         withDemoRollbackKit(async ({ rollbackkit }) =>
             rollbackkit.preview({
                 name: MEMBER_REMOVE_ACTION_NAME,
-                actor: DEMO_ACTOR,
-                tenantId: DEMO_TENANT_ID,
+                actor: context.actor,
+                tenantId: context.tenantId,
                 input: {
-                    workspaceId: DEMO_WORKSPACE_ID,
+                    workspaceId: context.workspaceId,
                     memberId,
                 },
             }),
@@ -33,16 +34,17 @@ export async function previewMemberRemove(
 export async function executeMemberRemove(
     memberId: string,
     idempotencyKey: string,
+    context: DemoRequestContext,
 ): Promise<DemoActionResponse<DemoActionRunDto>> {
     return runDemoAction(async () =>
         withDemoRollbackKit(async ({ rollbackkit }) => {
             const run = await rollbackkit.execute({
                 name: MEMBER_REMOVE_ACTION_NAME,
-                actor: DEMO_ACTOR,
-                tenantId: DEMO_TENANT_ID,
+                actor: context.actor,
+                tenantId: context.tenantId,
                 idempotencyKey,
                 input: {
-                    workspaceId: DEMO_WORKSPACE_ID,
+                    workspaceId: context.workspaceId,
                     memberId,
                 },
             });

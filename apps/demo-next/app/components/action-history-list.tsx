@@ -1,6 +1,5 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import type { DemoActionHistoryEntry } from '../../lib/server/action-history-repository';
 import { undoDemoActionRun } from '../actions/action-runs';
@@ -14,7 +13,6 @@ interface ActionErrorState {
 }
 
 export function ActionHistoryList({ entries }: ActionHistoryListProps) {
-    const router = useRouter();
     const [isPending, startTransition] = useTransition();
     const [pendingActionRunId, setPendingActionRunId] = useState<string | null>(null);
     const [error, setError] = useState<ActionErrorState | null>(null);
@@ -39,7 +37,6 @@ export function ActionHistoryList({ entries }: ActionHistoryListProps) {
             }
 
             setPendingActionRunId(null);
-            router.refresh();
         });
     }
 
