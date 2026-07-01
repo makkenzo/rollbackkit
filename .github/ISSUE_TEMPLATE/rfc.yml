@@ -1,0 +1,32 @@
+name: RFC
+description: Propose an architectural decision before implementation.
+title: "rfc: "
+labels:
+  - rfc
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What decision needs to be made?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe the API, package boundary or behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Tradeoffs
+      description: What gets better, worse or deferred?
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility
+      description: Does this affect existing public APIs, migrations or error codes?

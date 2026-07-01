@@ -9,6 +9,7 @@
         "typecheck": "tsc --noEmit",
         "lint": "biome check .",
         "test": "vitest run",
+        "test:unit": "vitest run test/unit",
         "test:integration": "vitest run test/integration",
         "predb:migrate": "pnpm --filter @rollbackkit/postgres build",
         "db:migrate": "node scripts/migrate-demo-db.mjs",

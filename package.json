@@ -15,6 +15,8 @@
         "format": "biome format --write .",
         "format:check": "biome format .",
         "test": "turbo run test",
+        "test:unit": "pnpm --filter @rollbackkit/core test && pnpm --filter @rollbackkit/postgres test:unit && pnpm --filter @rollbackkit/cli test && pnpm --filter @rollbackkit/demo-next test:unit && pnpm --filter @rollbackkit/docs test",
+        "ci:pr": "pnpm lint && pnpm typecheck && pnpm test:unit && pnpm build",
         "clean": "turbo run clean && rm -rf node_modules",
         "changeset": "changeset",
         "version-packages": "changeset version",

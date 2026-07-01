@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a new capability or package surface.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or maintainer problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should RollbackKit add or change?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - "@rollbackkit/core"
+        - "@rollbackkit/postgres"
+        - "@rollbackkit/cli"
+        - future @rollbackkit/react
+        - future @rollbackkit/next
+        - future @rollbackkit/testkit
+        - docs
+        - demo
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

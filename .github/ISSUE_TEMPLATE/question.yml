@@ -1,0 +1,17 @@
+name: Question
+description: Ask about RollbackKit usage, roadmap or architecture.
+title: "question: "
+labels:
+  - question
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What are you trying to build or decide?
