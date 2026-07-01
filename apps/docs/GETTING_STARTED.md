@@ -200,6 +200,7 @@ details.
 ## Common Mistakes
 
 - Do not mutate product state in `preview`.
+- Do not accept `actor` or `tenantId` from untrusted client payloads.
 - Do not mark an action as fully reversible unless its undo handler can actually restore state.
 - Do not store secrets or unnecessary sensitive data in snapshots.
 - Do not pass a bare `pg.Pool` directly to `createPostgresStore` for undo flows; use a single
@@ -211,6 +212,7 @@ details.
 - [Introduction](./INTRODUCTION.md)
 - [Why rollback-first](./WHY_ROLLBACK_FIRST.md)
 - [Core Lifecycle](./CORE_LIFECYCLE.md)
+- [Security Baseline](./SECURITY.md)
 - [PostgreSQL Setup](./POSTGRESQL_SETUP.md)
 - [Recipes](./recipes/README.md)
 - [Soft Delete With Undo](./recipes/SOFT_DELETE_WITH_UNDO.md)

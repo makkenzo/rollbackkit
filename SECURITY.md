@@ -3,6 +3,9 @@
 RollbackKit is in early v0. Report security issues privately and avoid publishing exploit details
 before maintainers have had time to investigate.
 
+For the product-level security model around actors, tenants, snapshots, audit history and undo, see
+[Security Baseline](./apps/docs/SECURITY.md).
+
 ## Supported Versions
 
 Only the current `master` branch and the latest published v0 package line are supported.

@@ -53,3 +53,5 @@ Read [Recipes](./recipes/README.md) when you want concrete product patterns:
 
 Read [PostgreSQL Setup](./POSTGRESQL_SETUP.md) when you are ready to persist action runs and
 snapshots.
+
+Read [Security Baseline](./SECURITY.md) before using RollbackKit with production data.

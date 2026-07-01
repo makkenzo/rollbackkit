@@ -233,6 +233,7 @@ Planned demo scenarios include document archive, customer import rollback, confl
 - [Introduction](./apps/docs/INTRODUCTION.md)
 - [Why rollback-first](./apps/docs/WHY_ROLLBACK_FIRST.md)
 - [Getting started](./apps/docs/GETTING_STARTED.md)
+- [Security baseline](./apps/docs/SECURITY.md)
 - [PostgreSQL setup](./apps/docs/POSTGRESQL_SETUP.md)
 - [Demo app](./apps/docs/DEMO_APP.md)
 - [Recipes](./apps/docs/recipes/README.md)
