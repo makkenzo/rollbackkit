@@ -10,6 +10,7 @@ import {
     findDemoMemberById,
 } from '../repositories/member-repository';
 import { assertDemoWorkspaceScope } from './demo-action-scope';
+import { recordDemoUndoConflict } from './undo-conflict';
 
 export const MEMBER_CHANGE_ROLE_ACTION_NAME = 'member.change_role';
 
@@ -163,10 +164,15 @@ export function createMemberChangeRoleAction(executor: PostgresQueryExecutor) {
             );
 
             if (currentMember.role !== snapshot.value.changedToRole) {
-                throw createMemberRoleConflictError(
-                    currentMember.id,
-                    `Expected current role "${snapshot.value.changedToRole}", but found "${currentMember.role}".`,
-                );
+                const reason = `Expected current role "${snapshot.value.changedToRole}", but found "${currentMember.role}".`;
+
+                await recordDemoUndoConflict(context.conflicts, reason, {
+                    expectedState: `Member role is ${formatRoleLabel(snapshot.value.changedToRole)}`,
+                    actualState: `Member role is ${formatRoleLabel(currentMember.role)}`,
+                    suggestedNextStep: 'Review the current member role before retrying undo.',
+                });
+
+                throw createMemberRoleConflictError(currentMember.id, reason);
             }
         },
 

@@ -1,7 +1,12 @@
 import 'server-only';
 
 import { type ActionRun, isRollbackKitError } from '@rollbackkit/core';
-import type { DemoActionError, DemoActionResponse, DemoActionRunDto } from '../demo-action-types';
+import type {
+    DemoActionConflictDto,
+    DemoActionError,
+    DemoActionResponse,
+    DemoActionRunDto,
+} from '../demo-action-types';
 
 export type { DemoActionError, DemoActionResponse, DemoActionRunDto };
 
@@ -51,21 +56,27 @@ export function serializeActionRun(run: ActionRun): DemoActionRunDto {
     };
 }
 
-function serializeActionError(error: unknown): DemoActionError {
+export function serializeActionError(
+    error: unknown,
+    conflict?: DemoActionConflictDto,
+): DemoActionError {
     if (isRollbackKitError(error)) {
         return {
             code: error.code,
             message: error.message,
+            ...(conflict === undefined ? {} : { conflict }),
         };
     }
 
     if (error instanceof Error) {
         return {
             message: error.message,
+            ...(conflict === undefined ? {} : { conflict }),
         };
     }
 
     return {
         message: 'Unknown demo action error.',
+        ...(conflict === undefined ? {} : { conflict }),
     };
 }

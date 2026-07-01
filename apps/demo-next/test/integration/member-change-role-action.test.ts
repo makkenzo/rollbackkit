@@ -168,6 +168,60 @@ ORDER BY created_at ASC
             'viewer',
         );
     });
+
+    it('blocks undo and stores conflict details when the member role changed again', async () => {
+        const currentClient = requireClient();
+        const rollbackkit = createDemoRollbackKit(currentClient);
+
+        const run = await rollbackkit.execute({
+            name: MEMBER_CHANGE_ROLE_ACTION_NAME,
+            actor,
+            tenantId: 'workspace_action_test',
+            input: {
+                workspaceId: 'workspace_action_test',
+                memberId: 'member_action_role_target',
+                role: 'admin',
+            },
+        });
+
+        await setMemberRole(currentClient, 'member_action_role_target', 'viewer');
+
+        await expect(
+            rollbackkit.undo({
+                actionRunId: run.id,
+                actor,
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_CONFLICT',
+            details: {
+                reason: 'Expected current role "admin", but found "viewer".',
+            },
+        });
+
+        await expect(readMemberRole(currentClient, 'member_action_role_target')).resolves.toBe(
+            'viewer',
+        );
+
+        const failedRun = await rollbackkit.getActionRun(run.id);
+
+        expect(failedRun).toMatchObject({
+            id: run.id,
+            status: 'undo_failed',
+        });
+
+        const conflicts = await rollbackkit.getConflicts(run.id);
+
+        expect(conflicts).toHaveLength(1);
+        expect(conflicts[0]).toMatchObject({
+            actionRunId: run.id,
+            reason: 'Expected current role "admin", but found "viewer".',
+            details: {
+                expectedState: 'Member role is Admin',
+                actualState: 'Member role is Viewer',
+                suggestedNextStep: 'Review the current member role before retrying undo.',
+            },
+        });
+    });
 });
 
 function requireClient(): Client {
@@ -229,4 +283,15 @@ WHERE id = $1
     }
 
     return row.role;
+}
+
+async function setMemberRole(executor: Client, memberId: string, role: string): Promise<void> {
+    await executor.query(
+        `
+UPDATE demo_members
+SET role = $2
+WHERE id = $1
+`,
+        [memberId, role],
+    );
 }

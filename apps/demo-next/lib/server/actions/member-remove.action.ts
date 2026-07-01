@@ -1,6 +1,12 @@
 import 'server-only';
 
-import { defineAction, type JsonObject, REVERSIBILITY, RollbackKitError } from '@rollbackkit/core';
+import {
+    type ConflictRecorder,
+    defineAction,
+    type JsonObject,
+    REVERSIBILITY,
+    RollbackKitError,
+} from '@rollbackkit/core';
 import type { PostgresQueryExecutor } from '@rollbackkit/postgres';
 import {
     type DemoMemberRecord,
@@ -20,6 +26,7 @@ import {
     restoreDemoProjectOwnerLinks,
 } from '../repositories/ownership-repository';
 import { assertDemoWorkspaceScope } from './demo-action-scope';
+import { recordDemoUndoConflict } from './undo-conflict';
 
 export const MEMBER_REMOVE_ACTION_NAME = 'member.remove';
 
@@ -176,16 +183,20 @@ export function createMemberRemoveAction(executor: PostgresQueryExecutor) {
             assertDemoWorkspaceScope(context);
 
             const snapshot = await readRemovedMemberStateSnapshot(context);
-            await assertMemberCanBeRestored(executor, snapshot.value);
+            await assertMemberCanBeRestored(executor, snapshot.value, context.conflicts);
             await assertOwnedProjectsCanBeRestored(
                 executor,
                 snapshot.value.workspaceId,
+                snapshot.value.memberId,
                 snapshot.value.ownedProjectIds,
+                context.conflicts,
             );
             await assertOwnedDocumentsCanBeRestored(
                 executor,
                 snapshot.value.workspaceId,
+                snapshot.value.memberId,
                 snapshot.value.ownedDocumentIds,
+                context.conflicts,
             );
         },
 
@@ -352,20 +363,27 @@ async function restoreMember(
 async function assertMemberCanBeRestored(
     executor: PostgresQueryExecutor,
     snapshot: RemovedMemberStateSnapshot,
+    conflicts: ConflictRecorder,
 ): Promise<void> {
     const existingMember = await getMemberById(executor, snapshot.workspaceId, snapshot.memberId);
 
     if (existingMember !== null) {
-        throw createMemberRemoveConflictError(
+        await throwMemberRemoveUndoConflict(
+            conflicts,
             snapshot.memberId,
             'Member already exists, so undo would be unsafe.',
+            'Member does not exist in the workspace',
+            'Member already exists in the workspace',
         );
     }
 
     if (!(await demoWorkspaceExists(executor, snapshot.workspaceId))) {
-        throw createMemberRemoveConflictError(
+        await throwMemberRemoveUndoConflict(
+            conflicts,
             snapshot.memberId,
             `Workspace "${snapshot.workspaceId}" no longer exists.`,
+            'Workspace exists',
+            'Workspace no longer exists',
         );
     }
 
@@ -376,9 +394,12 @@ async function assertMemberCanBeRestored(
     );
 
     if (emailOwnerId !== null) {
-        throw createMemberRemoveConflictError(
+        await throwMemberRemoveUndoConflict(
+            conflicts,
             snapshot.memberId,
             `Email "${snapshot.email}" is already used by member "${emailOwnerId}".`,
+            'Member email is available',
+            `Member email is used by "${emailOwnerId}"`,
         );
     }
 }
@@ -386,7 +407,9 @@ async function assertMemberCanBeRestored(
 async function assertOwnedProjectsCanBeRestored(
     executor: PostgresQueryExecutor,
     workspaceId: string,
+    memberId: string,
     projectIds: readonly string[],
+    conflicts: ConflictRecorder,
 ): Promise<void> {
     if (projectIds.length === 0) {
         return;
@@ -398,18 +421,24 @@ async function assertOwnedProjectsCanBeRestored(
     const missingIds = projectIds.filter((id) => !existingIds.has(id));
 
     if (missingIds.length > 0) {
-        throw createMemberRemoveConflictError(
-            'unknown',
+        await throwMemberRemoveUndoConflict(
+            conflicts,
+            memberId,
             `Owned project(s) no longer exist: ${missingIds.join(', ')}.`,
+            'Owned projects still exist',
+            `Missing owned project(s): ${missingIds.join(', ')}`,
         );
     }
 
     const reassignedProject = projects.find((row) => row.owner_member_id !== null);
 
     if (reassignedProject !== undefined) {
-        throw createMemberRemoveConflictError(
-            'unknown',
+        await throwMemberRemoveUndoConflict(
+            conflicts,
+            memberId,
             `Project "${reassignedProject.id}" already has another owner.`,
+            'Owned projects are unassigned',
+            `Project "${reassignedProject.id}" already has another owner`,
         );
     }
 }
@@ -417,7 +446,9 @@ async function assertOwnedProjectsCanBeRestored(
 async function assertOwnedDocumentsCanBeRestored(
     executor: PostgresQueryExecutor,
     workspaceId: string,
+    memberId: string,
     documentIds: readonly string[],
+    conflicts: ConflictRecorder,
 ): Promise<void> {
     if (documentIds.length === 0) {
         return;
@@ -429,18 +460,24 @@ async function assertOwnedDocumentsCanBeRestored(
     const missingIds = documentIds.filter((id) => !existingIds.has(id));
 
     if (missingIds.length > 0) {
-        throw createMemberRemoveConflictError(
-            'unknown',
+        await throwMemberRemoveUndoConflict(
+            conflicts,
+            memberId,
             `Owned document(s) no longer exist: ${missingIds.join(', ')}.`,
+            'Owned documents still exist',
+            `Missing owned document(s): ${missingIds.join(', ')}`,
         );
     }
 
     const reassignedDocument = documents.find((row) => row.owner_member_id !== null);
 
     if (reassignedDocument !== undefined) {
-        throw createMemberRemoveConflictError(
-            'unknown',
+        await throwMemberRemoveUndoConflict(
+            conflicts,
+            memberId,
             `Document "${reassignedDocument.id}" already has another owner.`,
+            'Owned documents are unassigned',
+            `Document "${reassignedDocument.id}" already has another owner`,
         );
     }
 }
@@ -500,6 +537,22 @@ function formatDocumentOwnershipImpact(count: number): string {
     return count === 1
         ? '1 owned document becomes unassigned'
         : `${count} owned documents become unassigned`;
+}
+
+async function throwMemberRemoveUndoConflict(
+    conflicts: ConflictRecorder,
+    memberId: string,
+    reason: string,
+    expectedState: string,
+    actualState: string,
+): Promise<never> {
+    await recordDemoUndoConflict(conflicts, reason, {
+        expectedState,
+        actualState,
+        suggestedNextStep: 'Review the current workspace membership before retrying undo.',
+    });
+
+    throw createMemberRemoveConflictError(memberId, reason);
 }
 
 function createMemberRemoveConflictError(memberId: string, reason: string): RollbackKitError {

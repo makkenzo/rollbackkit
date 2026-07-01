@@ -166,6 +166,48 @@ ORDER BY created_at ASC
             readProjectStatus(currentClient, 'project_action_archive_target'),
         ).resolves.toBe('active');
     });
+
+    it('blocks undo and stores conflict details when the project was deleted', async () => {
+        const currentClient = requireClient();
+        const rollbackkit = createDemoRollbackKit(currentClient);
+
+        const run = await rollbackkit.execute({
+            name: PROJECT_ARCHIVE_ACTION_NAME,
+            actor,
+            tenantId: 'workspace_action_test',
+            input: {
+                workspaceId: 'workspace_action_test',
+                projectId: 'project_action_archive_target',
+            },
+        });
+
+        await deleteProject(currentClient, 'project_action_archive_target');
+
+        await expect(
+            rollbackkit.undo({
+                actionRunId: run.id,
+                actor,
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_CONFLICT',
+            details: {
+                reason: 'Project no longer exists, so undo would be unsafe.',
+            },
+        });
+
+        const conflicts = await rollbackkit.getConflicts(run.id);
+
+        expect(conflicts).toHaveLength(1);
+        expect(conflicts[0]).toMatchObject({
+            actionRunId: run.id,
+            reason: 'Project no longer exists, so undo would be unsafe.',
+            details: {
+                expectedState: 'Project exists and is Archived',
+                actualState: 'Project no longer exists',
+                suggestedNextStep: 'Review the current project status before retrying undo.',
+            },
+        });
+    });
 });
 
 function requireClient(): Client {
@@ -294,4 +336,23 @@ WHERE id = $1
     }
 
     return row.status;
+}
+
+async function deleteProject(executor: Client, projectId: string): Promise<void> {
+    await executor.query(
+        `
+UPDATE demo_documents
+SET project_id = NULL
+WHERE project_id = $1
+`,
+        [projectId],
+    );
+
+    await executor.query(
+        `
+DELETE FROM demo_projects
+WHERE id = $1
+`,
+        [projectId],
+    );
 }

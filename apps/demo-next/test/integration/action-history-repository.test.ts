@@ -3,6 +3,7 @@ import { createPostgresMigrationRunner } from '@rollbackkit/postgres';
 import { Client } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getDemoActionHistory } from '../../lib/server/action-history-repository';
+import { MEMBER_CHANGE_ROLE_ACTION_NAME } from '../../lib/server/actions/member-change-role.action';
 import { MEMBER_REMOVE_ACTION_NAME } from '../../lib/server/actions/member-remove.action';
 import { PROJECT_ARCHIVE_ACTION_NAME } from '../../lib/server/actions/project-archive.action';
 import { closeDemoPostgresPool } from '../../lib/server/demo-db';
@@ -179,6 +180,52 @@ describeIntegration('action history repository', () => {
             canUndo: false,
         });
     });
+
+    it('loads conflict details for blocked undo history', async () => {
+        const currentClient = requireClient();
+        const rollbackkit = createDemoRollbackKit(currentClient);
+
+        await seedActionHistoryRoleChange(currentClient);
+
+        const run = await rollbackkit.execute({
+            name: MEMBER_CHANGE_ROLE_ACTION_NAME,
+            actor,
+            tenantId: 'workspace_acme',
+            input: {
+                workspaceId: 'workspace_acme',
+                memberId: 'member_action_history_role_target',
+                role: 'admin',
+            },
+        });
+
+        await setMemberRole(currentClient, 'member_action_history_role_target', 'viewer');
+
+        await expect(
+            rollbackkit.undo({
+                actionRunId: run.id,
+                actor,
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_CONFLICT',
+        });
+
+        const history = await getDemoActionHistory();
+
+        expect(history[0]).toMatchObject({
+            id: run.id,
+            actionName: MEMBER_CHANGE_ROLE_ACTION_NAME,
+            targetLabel: 'Action History Role Target',
+            statusLabel: 'Undo blocked',
+            statusTone: 'danger',
+            canUndo: false,
+            conflict: {
+                reason: 'Expected current role "admin", but found "viewer".',
+                expectedState: 'Member role is Admin',
+                actualState: 'Member role is Viewer',
+                suggestedNextStep: 'Review the current member role before retrying undo.',
+            },
+        });
+    });
 });
 
 function requireClient(): Client {
@@ -301,4 +348,34 @@ SET
     updated_at = EXCLUDED.updated_at,
     created_at = EXCLUDED.created_at;
 `);
+}
+
+async function seedActionHistoryRoleChange(executor: Client): Promise<void> {
+    await executor.query(`
+INSERT INTO demo_members (id, workspace_id, name, email, role)
+VALUES (
+    'member_action_history_role_target',
+    'workspace_acme',
+    'Action History Role Target',
+    'action-history-role-target@example.com',
+    'viewer'
+)
+ON CONFLICT (id) DO UPDATE
+SET
+    workspace_id = EXCLUDED.workspace_id,
+    name = EXCLUDED.name,
+    email = EXCLUDED.email,
+    role = EXCLUDED.role;
+`);
+}
+
+async function setMemberRole(executor: Client, memberId: string, role: string): Promise<void> {
+    await executor.query(
+        `
+UPDATE demo_members
+SET role = $2
+WHERE id = $1
+`,
+        [memberId, role],
+    );
 }

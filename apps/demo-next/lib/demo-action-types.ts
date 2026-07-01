@@ -11,6 +11,14 @@ export type DemoActionResponse<TData> =
 export interface DemoActionError {
     readonly code?: string;
     readonly message: string;
+    readonly conflict?: DemoActionConflictDto;
+}
+
+export interface DemoActionConflictDto {
+    readonly reason: string;
+    readonly expectedState?: string;
+    readonly actualState?: string;
+    readonly suggestedNextStep?: string;
 }
 
 export interface DemoActionRunDto {

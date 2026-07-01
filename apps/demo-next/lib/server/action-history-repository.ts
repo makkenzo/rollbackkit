@@ -2,6 +2,8 @@ import 'server-only';
 
 import type { ActionRun } from '@rollbackkit/core';
 
+import type { DemoActionConflictDto } from '../demo-action-types';
+import { getLatestDemoActionConflict } from './conflict-summary';
 import { DEMO_TENANT_ID } from './demo-request-context';
 import { withDemoRollbackKit } from './rollbackkit';
 
@@ -17,6 +19,7 @@ export interface DemoActionHistoryEntry {
     readonly occurredAt: string;
     readonly canUndo: boolean;
     readonly undoExpiresAt?: string;
+    readonly conflict?: DemoActionConflictDto;
 }
 
 export async function getDemoActionHistory(limit = 8): Promise<readonly DemoActionHistoryEntry[]> {
@@ -28,12 +31,23 @@ export async function getDemoActionHistory(limit = 8): Promise<readonly DemoActi
             limit,
         });
 
-        return runs.map((run) => mapActionHistoryEntry(run, now));
+        return Promise.all(
+            runs.map(async (run) => {
+                const conflicts =
+                    run.status === 'undo_failed' ? await rollbackkit.getConflicts(run.id) : [];
+
+                return mapActionHistoryEntry(run, now, getLatestDemoActionConflict(conflicts));
+            }),
+        );
     });
 }
 
-function mapActionHistoryEntry(run: ActionRun, now: Date): DemoActionHistoryEntry {
-    const status = formatActionStatus(run, now);
+function mapActionHistoryEntry(
+    run: ActionRun,
+    now: Date,
+    conflict: DemoActionConflictDto | undefined,
+): DemoActionHistoryEntry {
+    const status = formatActionStatus(run, now, conflict);
     const canUndo = isUndoAvailable(run, now);
 
     return {
@@ -48,6 +62,7 @@ function mapActionHistoryEntry(run: ActionRun, now: Date): DemoActionHistoryEntr
         ...(run.undoExpiresAt === undefined
             ? {}
             : { undoExpiresAt: formatDate(run.undoExpiresAt) }),
+        ...(conflict === undefined ? {} : { conflict }),
     };
 }
 
@@ -72,6 +87,7 @@ function formatTargetLabel(run: ActionRun): string {
 function formatActionStatus(
     run: ActionRun,
     now: Date,
+    conflict: DemoActionConflictDto | undefined,
 ): {
     readonly label: string;
     readonly tone: DemoActionHistoryTone;
@@ -103,6 +119,13 @@ function formatActionStatus(
             };
 
         case 'undo_failed':
+            if (conflict !== undefined) {
+                return {
+                    label: 'Undo blocked',
+                    tone: 'danger',
+                };
+            }
+
             return {
                 label: 'Undo failed',
                 tone: 'danger',

@@ -7,7 +7,7 @@ import { revalidateDemoHome } from './revalidation';
 export async function undoDemoActionRun(actionRunId: string) {
     const response = await undoDemoActionRunService(actionRunId, getDemoRequestContext());
 
-    if (response.ok) {
+    if (response.ok || response.error.conflict !== undefined) {
         revalidateDemoHome();
     }
 

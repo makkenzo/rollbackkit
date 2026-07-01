@@ -308,6 +308,52 @@ td:first-child {
     font-size: 0.88rem;
 }
 
+.conflict-panel {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+    border: 1px solid #fecaca;
+    border-radius: 10px;
+    background: #fef2f2;
+    padding: 10px;
+    color: #7f1d1d;
+    font-size: 0.84rem;
+    line-height: 1.45;
+}
+
+.conflict-panel strong {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+}
+
+.conflict-panel p {
+    margin: 0;
+    color: inherit;
+    font-size: inherit;
+}
+
+.conflict-panel dl {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+}
+
+.conflict-panel dl > div {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 8px;
+}
+
+.conflict-panel dt {
+    color: #991b1b;
+    font-weight: 650;
+}
+
+.conflict-panel dd {
+    margin: 0;
+    color: #7f1d1d;
+}
+
 .status-badge {
     flex: 0 0 auto;
     border: 1px solid #e5e5e5;
@@ -685,6 +731,15 @@ td:first-child {
     color: #991b1b;
     font-size: 0.86rem;
     line-height: 1.5;
+}
+
+.history-error p {
+    margin: 0;
+}
+
+.history-error .conflict-panel {
+    margin-top: 10px;
+    background: #ffffff;
 }
 
 .member-actions {

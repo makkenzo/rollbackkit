@@ -129,6 +129,39 @@ WHERE id = $1
         await expect(readMemberRole('member_server_action_role_target')).resolves.toBe('viewer');
     });
 
+    it('returns conflict details when undo is blocked by a later role change', async () => {
+        const executed = await executeMemberRoleChange(
+            'member_server_action_role_target',
+            'admin',
+            'test:member.change_role:server-action-conflict',
+        );
+
+        expect(executed.ok).toBe(true);
+
+        if (!executed.ok) {
+            throw new Error(executed.error.message);
+        }
+
+        await setMemberRole('member_server_action_role_target', 'viewer');
+
+        const undone = await undoDemoActionRun(executed.data.id);
+
+        expect(undone).toEqual({
+            ok: false,
+            error: {
+                code: 'ACTION_CONFLICT',
+                message:
+                    'Member "member_server_action_role_target" role cannot be changed safely: Expected current role "admin", but found "viewer".',
+                conflict: {
+                    reason: 'Expected current role "admin", but found "viewer".',
+                    expectedState: 'Member role is Admin',
+                    actualState: 'Member role is Viewer',
+                    suggestedNextStep: 'Review the current member role before retrying undo.',
+                },
+            },
+        });
+    });
+
     it('returns a typed failure for missing member preview', async () => {
         const preview = await previewMemberRoleChange('missing_member', 'admin');
 
@@ -180,6 +213,19 @@ WHERE id = $1
     }
 
     return row.role;
+}
+
+async function setMemberRole(memberId: string, role: string): Promise<void> {
+    const currentClient = requireClient();
+
+    await currentClient.query(
+        `
+UPDATE demo_members
+SET role = $2
+WHERE id = $1
+`,
+        [memberId, role],
+    );
 }
 
 function requireClient(): Client {

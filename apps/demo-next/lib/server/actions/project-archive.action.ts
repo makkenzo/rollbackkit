@@ -10,6 +10,7 @@ import {
     restoreDemoProject,
 } from '../repositories/project-repository';
 import { assertDemoWorkspaceScope } from './demo-action-scope';
+import { recordDemoUndoConflict } from './undo-conflict';
 
 export const PROJECT_ARCHIVE_ACTION_NAME = 'project.archive';
 
@@ -137,17 +138,34 @@ export function createProjectArchiveAction(executor: PostgresQueryExecutor) {
             assertDemoWorkspaceScope(context);
 
             const snapshot = await readPreviousProjectStateSnapshot(context);
-            const currentProject = await getProjectOrThrow(
+            const currentProject = await findDemoProjectById(
                 executor,
                 snapshot.value.workspaceId,
                 snapshot.value.projectId,
             );
 
+            if (currentProject === null) {
+                const reason = 'Project no longer exists, so undo would be unsafe.';
+
+                await recordDemoUndoConflict(context.conflicts, reason, {
+                    expectedState: 'Project exists and is Archived',
+                    actualState: 'Project no longer exists',
+                    suggestedNextStep: 'Review the current project status before retrying undo.',
+                });
+
+                throw createProjectConflictError(snapshot.value.projectId, reason);
+            }
+
             if (currentProject.status !== 'archived') {
-                throw createProjectConflictError(
-                    currentProject.id,
-                    'Project is no longer archived, so undo would be unsafe.',
-                );
+                const reason = 'Project is no longer archived, so undo would be unsafe.';
+
+                await recordDemoUndoConflict(context.conflicts, reason, {
+                    expectedState: 'Project status is Archived',
+                    actualState: `Project status is ${formatProjectStatusLabel(currentProject.status)}`,
+                    suggestedNextStep: 'Review the current project status before retrying undo.',
+                });
+
+                throw createProjectConflictError(currentProject.id, reason);
             }
         },
 
@@ -301,6 +319,15 @@ function parseDocumentCount(value: number | string): number {
 
 function formatDocumentImpact(count: number): string {
     return count === 1 ? '1 document remains attached' : `${count} documents remain attached`;
+}
+
+function formatProjectStatusLabel(status: DemoProjectStorageStatus): string {
+    switch (status) {
+        case 'active':
+            return 'Active';
+        case 'archived':
+            return 'Archived';
+    }
 }
 
 function createProjectConflictError(projectId: string, reason: string): RollbackKitError {
