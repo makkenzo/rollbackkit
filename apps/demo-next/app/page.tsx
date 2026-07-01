@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react';
+import { ActionHistoryList } from '@/app/components/action-history-list';
 import { MemberRemoveControl } from '@/app/components/member-remove-control';
-import type { DemoMember, DemoPreviewImpact, DemoProject } from '../lib/demo-domain';
-import { getDemoActionHistory } from '../lib/server/action-history-repository';
-import { getDemoDashboardData } from '../lib/server/demo-repository';
-import { ActionHistoryList } from './components/action-history-list';
-import { MemberRoleChangeControl } from './components/member-role-change-control';
-import { ProjectArchiveControl } from './components/project-archive-control';
+import { MemberRoleChangeControl } from '@/app/components/member-role-change-control';
+import { ProjectArchiveControl } from '@/app/components/project-archive-control';
+import type { DemoMember, DemoPreviewImpact, DemoProject } from '@/lib/demo-domain';
+import { getDemoActionHistory } from '@/lib/server/action-history-repository';
+import { getDemoDashboardData } from '@/lib/server/demo-repository';
 
 export const dynamic = 'force-dynamic';
 

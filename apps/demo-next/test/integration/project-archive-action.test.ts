@@ -67,6 +67,7 @@ WHERE tenant_id = $1
             actor,
             tenantId: 'workspace_action_test',
             input: {
+                workspaceId: 'workspace_action_test',
                 projectId: 'project_action_archive_target',
             },
         });
@@ -90,6 +91,7 @@ WHERE tenant_id = $1
             actor,
             tenantId: 'workspace_action_test',
             input: {
+                workspaceId: 'workspace_action_test',
                 projectId: 'project_action_archive_target',
             },
         });

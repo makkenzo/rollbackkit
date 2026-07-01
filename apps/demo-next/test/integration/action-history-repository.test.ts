@@ -63,6 +63,7 @@ describeIntegration('action history repository', () => {
             actor,
             tenantId: 'workspace_acme',
             input: {
+                workspaceId: 'workspace_acme',
                 projectId: 'project_billing',
             },
         });
@@ -78,6 +79,7 @@ describeIntegration('action history repository', () => {
             },
             tenantId: 'workspace_action_test',
             input: {
+                workspaceId: 'workspace_action_test',
                 projectId: 'project_action_history_hidden',
             },
         });
@@ -112,6 +114,7 @@ describeIntegration('action history repository', () => {
             actor,
             tenantId: 'workspace_acme',
             input: {
+                workspaceId: 'workspace_acme',
                 memberId: 'member_action_history_remove_target',
             },
         });
@@ -157,6 +160,7 @@ describeIntegration('action history repository', () => {
                 actor,
                 tenantId: 'workspace_acme',
                 input: {
+                    workspaceId: 'workspace_acme',
                     memberId: 'member_ada',
                 },
             }),

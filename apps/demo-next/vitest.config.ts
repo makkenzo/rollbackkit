@@ -8,6 +8,7 @@ const configDirectory = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
     resolve: {
         alias: {
+            '@': configDirectory,
             'server-only': resolve(configDirectory, 'test/server-only-stub.ts'),
         },
     },

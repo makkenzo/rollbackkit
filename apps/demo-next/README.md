@@ -5,7 +5,7 @@ A Next.js demo application for RollbackKit.
 
 RollbackKit helps TypeScript teams model dangerous SaaS actions as explicit product operations with preview, audit history and undo.
 
-This demo shows a small workspace with projects, members and documents. It is designed to demonstrate how actions such as archiving a project, changing a member role or archiving a document can be made safer through RollbackKit.
+This demo shows a small workspace with projects, members and documents. It is designed to demonstrate how actions such as archiving a project, changing a member role or removing a member can be made safer through RollbackKit.
 
 ## Local setup
 
@@ -13,7 +13,7 @@ Create a local environment file:
 
 ```bash
 cp apps/demo-next/.env.example apps/demo-next/.env.local
-````
+```
 
 Set the demo database URL:
 

@@ -66,6 +66,7 @@ WHERE tenant_id = $1
             actor,
             tenantId: 'workspace_member_remove_test',
             input: {
+                workspaceId: 'workspace_member_remove_test',
                 memberId: 'member_remove_target',
             },
         });
@@ -92,6 +93,7 @@ WHERE tenant_id = $1
             actor,
             tenantId: 'workspace_member_remove_test',
             input: {
+                workspaceId: 'workspace_member_remove_test',
                 memberId: 'member_remove_target',
             },
         });
@@ -194,6 +196,7 @@ ORDER BY created_at ASC
                 actor,
                 tenantId: 'workspace_member_remove_test',
                 input: {
+                    workspaceId: 'workspace_member_remove_test',
                     memberId: 'member_remove_owner',
                 },
             }),

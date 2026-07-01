@@ -3,7 +3,7 @@
 import {
     executeMemberRemove as executeMemberRemoveService,
     previewMemberRemove as previewMemberRemoveService,
-} from '../../lib/server/member-remove-service';
+} from '@/lib/server/member-remove-service';
 
 export async function previewMemberRemove(memberId: string) {
     return previewMemberRemoveService(memberId);

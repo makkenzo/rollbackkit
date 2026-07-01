@@ -5,18 +5,21 @@ import type { PostgresQueryExecutor } from '@rollbackkit/postgres';
 import {
     type DemoMemberRecord,
     type DemoMemberStorageRole,
-    type DemoOwnershipImpact,
     deleteDemoMember,
     demoWorkspaceExists,
     findDemoMemberById,
     findDemoMemberByWorkspaceEmail,
+    insertDemoMember,
+} from '../repositories/member-repository';
+import {
+    type DemoOwnershipImpact,
     findDemoOwnedDocumentsByIds,
     findDemoOwnedProjectsByIds,
-    insertDemoMember,
     readDemoOwnershipImpact,
     restoreDemoDocumentOwnerLinks,
     restoreDemoProjectOwnerLinks,
-} from '../repositories/member-repository';
+} from '../repositories/ownership-repository';
+import { assertDemoWorkspaceScope } from './demo-action-scope';
 
 export const MEMBER_REMOVE_ACTION_NAME = 'member.remove';
 
@@ -24,6 +27,7 @@ const MEMBER_REMOVE_UNDO_WINDOW_MS = 30 * 60 * 1000;
 const REMOVED_MEMBER_STATE_SNAPSHOT_KEY = 'removedMemberState';
 
 type MemberRemoveInput = JsonObject & {
+    readonly workspaceId: string;
     readonly memberId: string;
 };
 
@@ -64,7 +68,13 @@ export function createMemberRemoveAction(executor: PostgresQueryExecutor) {
         undoWindowMs: MEMBER_REMOVE_UNDO_WINDOW_MS,
 
         resolveTarget: async (context) => {
-            const member = await getMemberOrThrow(executor, context.input.memberId);
+            assertDemoWorkspaceScope(context);
+
+            const member = await getMemberOrThrow(
+                executor,
+                context.input.workspaceId,
+                context.input.memberId,
+            );
 
             return {
                 id: member.id,
@@ -78,11 +88,21 @@ export function createMemberRemoveAction(executor: PostgresQueryExecutor) {
         },
 
         preview: async (context) => {
-            const member = await getMemberOrThrow(executor, context.input.memberId);
+            assertDemoWorkspaceScope(context);
+
+            const member = await getMemberOrThrow(
+                executor,
+                context.input.workspaceId,
+                context.input.memberId,
+            );
 
             assertMemberCanBeRemoved(member);
 
-            const ownership = await getOwnershipImpact(executor, member.id);
+            const ownership = await getOwnershipImpact(
+                executor,
+                context.input.workspaceId,
+                member.id,
+            );
 
             return {
                 title: `Remove ${member.name}`,
@@ -111,18 +131,32 @@ export function createMemberRemoveAction(executor: PostgresQueryExecutor) {
         },
 
         execute: async (context) => {
-            const member = await getMemberOrThrow(executor, context.input.memberId);
+            assertDemoWorkspaceScope(context);
+
+            const member = await getMemberOrThrow(
+                executor,
+                context.input.workspaceId,
+                context.input.memberId,
+            );
 
             assertMemberCanBeRemoved(member);
 
-            const ownership = await getOwnershipImpact(executor, member.id);
+            const ownership = await getOwnershipImpact(
+                executor,
+                context.input.workspaceId,
+                member.id,
+            );
 
             await context.snapshots.save(
                 REMOVED_MEMBER_STATE_SNAPSHOT_KEY,
                 createRemovedMemberStateSnapshot(member, ownership),
             );
 
-            const removedMember = await removeMember(executor, member.id);
+            const removedMember = await removeMember(
+                executor,
+                context.input.workspaceId,
+                member.id,
+            );
 
             return {
                 data: {
@@ -138,36 +172,40 @@ export function createMemberRemoveAction(executor: PostgresQueryExecutor) {
             };
         },
 
-        undo: async (context) => {
-            const snapshot = await context.snapshots.get<RemovedMemberStateSnapshot>(
-                REMOVED_MEMBER_STATE_SNAPSHOT_KEY,
-            );
+        checkConflicts: async (context) => {
+            assertDemoWorkspaceScope(context);
 
-            if (snapshot === null) {
-                throw new RollbackKitError({
-                    code: 'SNAPSHOT_NOT_FOUND',
-                    message: 'Removed member state snapshot was not found.',
-                    details: {
-                        actionRunId: context.run.id,
-                        snapshotKey: REMOVED_MEMBER_STATE_SNAPSHOT_KEY,
-                    },
-                });
-            }
-
+            const snapshot = await readRemovedMemberStateSnapshot(context);
             await assertMemberCanBeRestored(executor, snapshot.value);
-            await assertOwnedProjectsCanBeRestored(executor, snapshot.value.ownedProjectIds);
-            await assertOwnedDocumentsCanBeRestored(executor, snapshot.value.ownedDocumentIds);
+            await assertOwnedProjectsCanBeRestored(
+                executor,
+                snapshot.value.workspaceId,
+                snapshot.value.ownedProjectIds,
+            );
+            await assertOwnedDocumentsCanBeRestored(
+                executor,
+                snapshot.value.workspaceId,
+                snapshot.value.ownedDocumentIds,
+            );
+        },
+
+        undo: async (context) => {
+            assertDemoWorkspaceScope(context);
+
+            const snapshot = await readRemovedMemberStateSnapshot(context);
 
             const restoredMember = await restoreMember(executor, snapshot.value);
 
             const restoredProjectOwnerLinks = await restoreDemoProjectOwnerLinks(
                 executor,
+                snapshot.value.workspaceId,
                 restoredMember.id,
                 snapshot.value.ownedProjectIds,
             );
 
             const restoredDocumentOwnerLinks = await restoreDemoDocumentOwnerLinks(
                 executor,
+                snapshot.value.workspaceId,
                 restoredMember.id,
                 snapshot.value.ownedDocumentIds,
             );
@@ -188,29 +226,60 @@ export function createMemberRemoveAction(executor: PostgresQueryExecutor) {
     });
 }
 
+async function readRemovedMemberStateSnapshot(context: {
+    readonly run: { readonly id: string };
+    readonly snapshots: {
+        get<TValue extends JsonObject>(key: string): Promise<{ readonly value: TValue } | null>;
+    };
+}): Promise<{ readonly value: RemovedMemberStateSnapshot }> {
+    const snapshot = await context.snapshots.get<RemovedMemberStateSnapshot>(
+        REMOVED_MEMBER_STATE_SNAPSHOT_KEY,
+    );
+
+    if (snapshot === null) {
+        throw new RollbackKitError({
+            code: 'SNAPSHOT_NOT_FOUND',
+            message: 'Removed member state snapshot was not found.',
+            details: {
+                actionRunId: context.run.id,
+                snapshotKey: REMOVED_MEMBER_STATE_SNAPSHOT_KEY,
+            },
+        });
+    }
+
+    return snapshot;
+}
+
 function parseMemberRemoveInput(input: unknown): MemberRemoveInput {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) {
         throw new Error('Member remove input must be an object.');
     }
 
     const candidate = input as {
+        readonly workspaceId?: unknown;
         readonly memberId?: unknown;
     };
+
+    if (typeof candidate.workspaceId !== 'string' || candidate.workspaceId.trim() === '') {
+        throw new Error('Member remove input requires workspaceId.');
+    }
 
     if (typeof candidate.memberId !== 'string' || candidate.memberId.trim() === '') {
         throw new Error('Member remove input requires memberId.');
     }
 
     return {
+        workspaceId: candidate.workspaceId.trim(),
         memberId: candidate.memberId.trim(),
     } as MemberRemoveInput;
 }
 
 async function getMemberOrThrow(
     executor: PostgresQueryExecutor,
+    workspaceId: string,
     memberId: string,
 ): Promise<DemoMemberRecord> {
-    const member = await getMemberById(executor, memberId);
+    const member = await getMemberById(executor, workspaceId, memberId);
 
     if (member === null) {
         throw new RollbackKitError({
@@ -227,23 +296,26 @@ async function getMemberOrThrow(
 
 async function getMemberById(
     executor: PostgresQueryExecutor,
+    workspaceId: string,
     memberId: string,
 ): Promise<DemoMemberRecord | null> {
-    return findDemoMemberById(executor, memberId);
+    return findDemoMemberById(executor, workspaceId, memberId);
 }
 
 async function getOwnershipImpact(
     executor: PostgresQueryExecutor,
+    workspaceId: string,
     memberId: string,
 ): Promise<DemoOwnershipImpact> {
-    return readDemoOwnershipImpact(executor, memberId);
+    return readDemoOwnershipImpact(executor, workspaceId, memberId);
 }
 
 async function removeMember(
     executor: PostgresQueryExecutor,
+    workspaceId: string,
     memberId: string,
 ): Promise<DemoMemberRecord> {
-    const member = await deleteDemoMember(executor, memberId);
+    const member = await deleteDemoMember(executor, workspaceId, memberId);
 
     if (member === null) {
         throw new RollbackKitError({
@@ -281,7 +353,7 @@ async function assertMemberCanBeRestored(
     executor: PostgresQueryExecutor,
     snapshot: RemovedMemberStateSnapshot,
 ): Promise<void> {
-    const existingMember = await getMemberById(executor, snapshot.memberId);
+    const existingMember = await getMemberById(executor, snapshot.workspaceId, snapshot.memberId);
 
     if (existingMember !== null) {
         throw createMemberRemoveConflictError(
@@ -313,13 +385,14 @@ async function assertMemberCanBeRestored(
 
 async function assertOwnedProjectsCanBeRestored(
     executor: PostgresQueryExecutor,
+    workspaceId: string,
     projectIds: readonly string[],
 ): Promise<void> {
     if (projectIds.length === 0) {
         return;
     }
 
-    const projects = await findDemoOwnedProjectsByIds(executor, projectIds);
+    const projects = await findDemoOwnedProjectsByIds(executor, workspaceId, projectIds);
 
     const existingIds = new Set(projects.map((row) => row.id));
     const missingIds = projectIds.filter((id) => !existingIds.has(id));
@@ -343,13 +416,14 @@ async function assertOwnedProjectsCanBeRestored(
 
 async function assertOwnedDocumentsCanBeRestored(
     executor: PostgresQueryExecutor,
+    workspaceId: string,
     documentIds: readonly string[],
 ): Promise<void> {
     if (documentIds.length === 0) {
         return;
     }
 
-    const documents = await findDemoOwnedDocumentsByIds(executor, documentIds);
+    const documents = await findDemoOwnedDocumentsByIds(executor, workspaceId, documentIds);
 
     const existingIds = new Set(documents.map((row) => row.id));
     const missingIds = documentIds.filter((id) => !existingIds.has(id));

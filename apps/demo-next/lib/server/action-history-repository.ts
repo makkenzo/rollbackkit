@@ -1,17 +1,9 @@
 import 'server-only';
 
-import type {
-    ActionActor,
-    ActionRunStatus,
-    ActionTarget,
-    JsonObject,
-    Reversibility,
-    SerializedRollbackKitError,
-} from '@rollbackkit/core';
-import type { QueryResultRow } from 'pg';
+import type { ActionRun } from '@rollbackkit/core';
 
-import { getDemoPostgresPool } from './demo-db';
 import { DEMO_TENANT_ID } from './demo-request-context';
+import { withDemoRollbackKit } from './rollbackkit';
 
 export type DemoActionHistoryTone = 'neutral' | 'success' | 'warning' | 'danger';
 
@@ -27,99 +19,66 @@ export interface DemoActionHistoryEntry {
     readonly undoExpiresAt?: string;
 }
 
-interface ActionHistoryRow extends QueryResultRow {
-    readonly id: string;
-    readonly name: string;
-    readonly status: ActionRunStatus;
-    readonly actor: ActionActor;
-    readonly target: ActionTarget | null;
-    readonly target_type: string | null;
-    readonly target_id: string | null;
-    readonly reversibility: Reversibility;
-    readonly created_at: Date | string;
-    readonly executed_at: Date | string | null;
-    readonly undo_expires_at: Date | string | null;
-    readonly undone_at: Date | string | null;
-    readonly error: SerializedRollbackKitError | null;
-    readonly metadata: JsonObject | null;
-}
-
 export async function getDemoActionHistory(limit = 8): Promise<readonly DemoActionHistoryEntry[]> {
-    const result = await getDemoPostgresPool().query<ActionHistoryRow>(
-        `
-SELECT
-    id,
-    name,
-    status,
-    actor,
-    target,
-    target_type,
-    target_id,
-    reversibility,
-    created_at,
-    executed_at,
-    undo_expires_at,
-    undone_at,
-    error,
-    metadata
-FROM rollbackkit_action_runs
-WHERE tenant_id = $1
-ORDER BY created_at DESC, id DESC
-LIMIT $2
-`,
-        [DEMO_TENANT_ID, limit],
-    );
-
     const now = new Date();
 
-    return result.rows.map((row) => mapActionHistoryEntry(row, now));
+    return withDemoRollbackKit(async ({ rollbackkit }) => {
+        const runs = await rollbackkit.queryActionRuns({
+            tenantId: DEMO_TENANT_ID,
+            limit,
+        });
+
+        return runs.map((run) => mapActionHistoryEntry(run, now));
+    });
 }
 
-function mapActionHistoryEntry(row: ActionHistoryRow, now: Date): DemoActionHistoryEntry {
-    const status = formatActionStatus(row, now);
-    const canUndo = isUndoAvailable(row, now);
+function mapActionHistoryEntry(run: ActionRun, now: Date): DemoActionHistoryEntry {
+    const status = formatActionStatus(run, now);
+    const canUndo = isUndoAvailable(run, now);
 
     return {
-        id: row.id,
-        actionName: row.name,
-        targetLabel: formatTargetLabel(row),
-        actorLabel: row.actor.displayName ?? row.actor.id,
+        id: run.id,
+        actionName: run.name,
+        targetLabel: formatTargetLabel(run),
+        actorLabel: run.actor.displayName ?? run.actor.id,
         statusLabel: status.label,
         statusTone: status.tone,
-        occurredAt: formatDate(row.executed_at ?? row.created_at),
+        occurredAt: formatDate(run.executedAt ?? run.createdAt),
         canUndo,
-        ...(row.undo_expires_at === null ? {} : { undoExpiresAt: formatDate(row.undo_expires_at) }),
+        ...(run.undoExpiresAt === undefined
+            ? {}
+            : { undoExpiresAt: formatDate(run.undoExpiresAt) }),
     };
 }
 
-function formatTargetLabel(row: ActionHistoryRow): string {
-    if (row.target?.label !== undefined && row.target.label.trim() !== '') {
-        return row.target.label;
+function formatTargetLabel(run: ActionRun): string {
+    if (run.target?.label !== undefined && run.target.label.trim() !== '') {
+        return run.target.label;
     }
 
-    const projectName = row.metadata?.projectName;
+    const projectName = run.metadata?.projectName;
 
     if (typeof projectName === 'string' && projectName.trim() !== '') {
         return projectName;
     }
 
-    if (row.target_id !== null && row.target_type !== null) {
-        return `${row.target_type}/${row.target_id}`;
+    if (run.target !== undefined) {
+        return `${run.target.type}/${run.target.id}`;
     }
 
     return 'Unknown target';
 }
 
 function formatActionStatus(
-    row: ActionHistoryRow,
+    run: ActionRun,
     now: Date,
 ): {
     readonly label: string;
     readonly tone: DemoActionHistoryTone;
 } {
-    switch (row.status) {
+    switch (run.status) {
         case 'completed':
-            if (isUndoAvailable(row, now)) {
+            if (isUndoAvailable(run, now)) {
                 return {
                     label: 'Undo available',
                     tone: 'warning',
@@ -175,16 +134,16 @@ function formatActionStatus(
     }
 }
 
-function isUndoAvailable(row: ActionHistoryRow, now: Date): boolean {
-    if (row.status !== 'completed') {
+function isUndoAvailable(run: ActionRun, now: Date): boolean {
+    if (run.status !== 'completed') {
         return false;
     }
 
-    if (!row.reversibility.undoable || row.undo_expires_at === null) {
+    if (!run.reversibility.undoable || run.undoExpiresAt === undefined) {
         return false;
     }
 
-    return parseDate(row.undo_expires_at).getTime() > now.getTime();
+    return run.undoExpiresAt.getTime() > now.getTime();
 }
 
 function formatDate(value: Date | string): string {

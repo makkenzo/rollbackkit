@@ -9,6 +9,7 @@ import {
     type DemoMemberStorageRole,
     findDemoMemberById,
 } from '../repositories/member-repository';
+import { assertDemoWorkspaceScope } from './demo-action-scope';
 
 export const MEMBER_CHANGE_ROLE_ACTION_NAME = 'member.change_role';
 
@@ -16,6 +17,7 @@ const MEMBER_CHANGE_ROLE_UNDO_WINDOW_MS = 30 * 60 * 1000;
 const PREVIOUS_MEMBER_ROLE_SNAPSHOT_KEY = 'previousMemberRole';
 
 type MemberChangeRoleInput = JsonObject & {
+    readonly workspaceId: string;
     readonly memberId: string;
     readonly role: DemoEditableMemberRole;
 };
@@ -28,6 +30,7 @@ interface MemberChangeRoleResult extends JsonObject {
 
 interface PreviousMemberRoleSnapshot extends JsonObject {
     readonly memberId: string;
+    readonly workspaceId: string;
     readonly previousRole: DemoMemberStorageRole;
     readonly changedToRole: DemoEditableMemberRole;
 }
@@ -42,7 +45,13 @@ export function createMemberChangeRoleAction(executor: PostgresQueryExecutor) {
         undoWindowMs: MEMBER_CHANGE_ROLE_UNDO_WINDOW_MS,
 
         resolveTarget: async (context) => {
-            const member = await getMemberOrThrow(executor, context.input.memberId);
+            assertDemoWorkspaceScope(context);
+
+            const member = await getMemberOrThrow(
+                executor,
+                context.input.workspaceId,
+                context.input.memberId,
+            );
 
             return {
                 id: member.id,
@@ -56,7 +65,13 @@ export function createMemberChangeRoleAction(executor: PostgresQueryExecutor) {
         },
 
         preview: async (context) => {
-            const member = await getMemberOrThrow(executor, context.input.memberId);
+            assertDemoWorkspaceScope(context);
+
+            const member = await getMemberOrThrow(
+                executor,
+                context.input.workspaceId,
+                context.input.memberId,
+            );
 
             assertMemberCanChangeRole(member);
 
@@ -96,7 +111,13 @@ export function createMemberChangeRoleAction(executor: PostgresQueryExecutor) {
         },
 
         execute: async (context) => {
-            const member = await getMemberOrThrow(executor, context.input.memberId);
+            assertDemoWorkspaceScope(context);
+
+            const member = await getMemberOrThrow(
+                executor,
+                context.input.workspaceId,
+                context.input.memberId,
+            );
 
             assertMemberCanChangeRole(member);
 
@@ -112,7 +133,12 @@ export function createMemberChangeRoleAction(executor: PostgresQueryExecutor) {
                 createPreviousMemberRoleSnapshot(member, context.input.role),
             );
 
-            const updatedMember = await changeMemberRole(executor, member.id, context.input.role);
+            const updatedMember = await changeMemberRole(
+                executor,
+                context.input.workspaceId,
+                member.id,
+                context.input.role,
+            );
 
             return {
                 data: {
@@ -126,23 +152,15 @@ export function createMemberChangeRoleAction(executor: PostgresQueryExecutor) {
             };
         },
 
-        undo: async (context) => {
-            const snapshot = await context.snapshots.get<PreviousMemberRoleSnapshot>(
-                PREVIOUS_MEMBER_ROLE_SNAPSHOT_KEY,
+        checkConflicts: async (context) => {
+            assertDemoWorkspaceScope(context);
+
+            const snapshot = await readPreviousMemberRoleSnapshot(context);
+            const currentMember = await getMemberOrThrow(
+                executor,
+                snapshot.value.workspaceId,
+                snapshot.value.memberId,
             );
-
-            if (snapshot === null) {
-                throw new RollbackKitError({
-                    code: 'SNAPSHOT_NOT_FOUND',
-                    message: 'Previous member role snapshot was not found.',
-                    details: {
-                        actionRunId: context.run.id,
-                        snapshotKey: PREVIOUS_MEMBER_ROLE_SNAPSHOT_KEY,
-                    },
-                });
-            }
-
-            const currentMember = await getMemberOrThrow(executor, snapshot.value.memberId);
 
             if (currentMember.role !== snapshot.value.changedToRole) {
                 throw createMemberRoleConflictError(
@@ -150,9 +168,16 @@ export function createMemberChangeRoleAction(executor: PostgresQueryExecutor) {
                     `Expected current role "${snapshot.value.changedToRole}", but found "${currentMember.role}".`,
                 );
             }
+        },
+
+        undo: async (context) => {
+            assertDemoWorkspaceScope(context);
+
+            const snapshot = await readPreviousMemberRoleSnapshot(context);
 
             const restoredMember = await changeMemberRole(
                 executor,
+                snapshot.value.workspaceId,
                 snapshot.value.memberId,
                 snapshot.value.previousRole,
             );
@@ -171,15 +196,44 @@ export function createMemberChangeRoleAction(executor: PostgresQueryExecutor) {
     });
 }
 
+async function readPreviousMemberRoleSnapshot(context: {
+    readonly run: { readonly id: string };
+    readonly snapshots: {
+        get<TValue extends JsonObject>(key: string): Promise<{ readonly value: TValue } | null>;
+    };
+}): Promise<{ readonly value: PreviousMemberRoleSnapshot }> {
+    const snapshot = await context.snapshots.get<PreviousMemberRoleSnapshot>(
+        PREVIOUS_MEMBER_ROLE_SNAPSHOT_KEY,
+    );
+
+    if (snapshot === null) {
+        throw new RollbackKitError({
+            code: 'SNAPSHOT_NOT_FOUND',
+            message: 'Previous member role snapshot was not found.',
+            details: {
+                actionRunId: context.run.id,
+                snapshotKey: PREVIOUS_MEMBER_ROLE_SNAPSHOT_KEY,
+            },
+        });
+    }
+
+    return snapshot;
+}
+
 function parseMemberChangeRoleInput(input: unknown): MemberChangeRoleInput {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) {
         throw new Error('Member role change input must be an object.');
     }
 
     const candidate = input as {
+        readonly workspaceId?: unknown;
         readonly memberId?: unknown;
         readonly role?: unknown;
     };
+
+    if (typeof candidate.workspaceId !== 'string' || candidate.workspaceId.trim() === '') {
+        throw new Error('Member role change input requires workspaceId.');
+    }
 
     if (typeof candidate.memberId !== 'string' || candidate.memberId.trim() === '') {
         throw new Error('Member role change input requires memberId.');
@@ -190,6 +244,7 @@ function parseMemberChangeRoleInput(input: unknown): MemberChangeRoleInput {
     }
 
     return {
+        workspaceId: candidate.workspaceId.trim(),
         memberId: candidate.memberId.trim(),
         role: candidate.role,
     } as MemberChangeRoleInput;
@@ -197,9 +252,10 @@ function parseMemberChangeRoleInput(input: unknown): MemberChangeRoleInput {
 
 async function getMemberOrThrow(
     executor: PostgresQueryExecutor,
+    workspaceId: string,
     memberId: string,
 ): Promise<DemoMemberRecord> {
-    const member = await findDemoMemberById(executor, memberId);
+    const member = await findDemoMemberById(executor, workspaceId, memberId);
 
     if (member === null) {
         throw new RollbackKitError({
@@ -216,10 +272,11 @@ async function getMemberOrThrow(
 
 async function changeMemberRole(
     executor: PostgresQueryExecutor,
+    workspaceId: string,
     memberId: string,
     role: DemoMemberStorageRole,
 ): Promise<DemoMemberRecord> {
-    const member = await changeDemoMemberRole(executor, memberId, role);
+    const member = await changeDemoMemberRole(executor, workspaceId, memberId, role);
 
     if (member === null) {
         throw new RollbackKitError({
@@ -240,6 +297,7 @@ function createPreviousMemberRoleSnapshot(
 ): PreviousMemberRoleSnapshot {
     return {
         memberId: member.id,
+        workspaceId: member.workspace_id,
         previousRole: member.role,
         changedToRole,
     };

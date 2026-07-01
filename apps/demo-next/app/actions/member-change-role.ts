@@ -3,7 +3,7 @@
 import {
     executeMemberRoleChange as executeMemberRoleChangeService,
     previewMemberRoleChange as previewMemberRoleChangeService,
-} from '../../lib/server/member-change-role-service';
+} from '@/lib/server/member-change-role-service';
 
 type EditableMemberRole = 'admin' | 'viewer';
 

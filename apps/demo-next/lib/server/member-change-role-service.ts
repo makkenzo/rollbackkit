@@ -9,7 +9,7 @@ import {
     runDemoAction,
     serializeActionRun,
 } from './demo-action-service';
-import { DEMO_ACTOR, DEMO_TENANT_ID } from './demo-request-context';
+import { DEMO_ACTOR, DEMO_TENANT_ID, DEMO_WORKSPACE_ID } from './demo-request-context';
 import { withDemoRollbackKit } from './rollbackkit';
 
 type EditableMemberRole = 'admin' | 'viewer';
@@ -25,6 +25,7 @@ export async function previewMemberRoleChange(
                 actor: DEMO_ACTOR,
                 tenantId: DEMO_TENANT_ID,
                 input: {
+                    workspaceId: DEMO_WORKSPACE_ID,
                     memberId,
                     role,
                 },
@@ -46,6 +47,7 @@ export async function executeMemberRoleChange(
                 tenantId: DEMO_TENANT_ID,
                 idempotencyKey,
                 input: {
+                    workspaceId: DEMO_WORKSPACE_ID,
                     memberId,
                     role,
                 },

@@ -9,6 +9,7 @@ import {
     findDemoProjectById,
     restoreDemoProject,
 } from '../repositories/project-repository';
+import { assertDemoWorkspaceScope } from './demo-action-scope';
 
 export const PROJECT_ARCHIVE_ACTION_NAME = 'project.archive';
 
@@ -16,6 +17,7 @@ const PROJECT_ARCHIVE_UNDO_WINDOW_MS = 30 * 60 * 1000;
 const PREVIOUS_PROJECT_STATE_SNAPSHOT_KEY = 'previousProjectState';
 
 type ProjectArchiveInput = JsonObject & {
+    readonly workspaceId: string;
     readonly projectId: string;
 };
 
@@ -26,6 +28,7 @@ interface ProjectArchiveResult extends JsonObject {
 }
 
 interface PreviousProjectStateSnapshot extends JsonObject {
+    readonly workspaceId: string;
     readonly projectId: string;
     readonly status: DemoProjectStorageStatus;
     readonly archivedAt: string | null;
@@ -42,7 +45,13 @@ export function createProjectArchiveAction(executor: PostgresQueryExecutor) {
         undoWindowMs: PROJECT_ARCHIVE_UNDO_WINDOW_MS,
 
         resolveTarget: async (context) => {
-            const project = await getProjectOrThrow(executor, context.input.projectId);
+            assertDemoWorkspaceScope(context);
+
+            const project = await getProjectOrThrow(
+                executor,
+                context.input.workspaceId,
+                context.input.projectId,
+            );
 
             return {
                 id: project.id,
@@ -55,7 +64,13 @@ export function createProjectArchiveAction(executor: PostgresQueryExecutor) {
         },
 
         preview: async (context) => {
-            const project = await getProjectOrThrow(executor, context.input.projectId);
+            assertDemoWorkspaceScope(context);
+
+            const project = await getProjectOrThrow(
+                executor,
+                context.input.workspaceId,
+                context.input.projectId,
+            );
             const documentCount = parseDocumentCount(project.document_count);
             const alreadyArchived = project.status === 'archived';
 
@@ -87,7 +102,13 @@ export function createProjectArchiveAction(executor: PostgresQueryExecutor) {
         },
 
         execute: async (context) => {
-            const project = await getProjectOrThrow(executor, context.input.projectId);
+            assertDemoWorkspaceScope(context);
+
+            const project = await getProjectOrThrow(
+                executor,
+                context.input.workspaceId,
+                context.input.projectId,
+            );
 
             if (project.status === 'archived') {
                 throw createProjectConflictError(project.id, 'Project is already archived.');
@@ -98,7 +119,11 @@ export function createProjectArchiveAction(executor: PostgresQueryExecutor) {
                 createPreviousProjectStateSnapshot(project),
             );
 
-            const archivedProject = await archiveProject(executor, project.id);
+            const archivedProject = await archiveProject(
+                executor,
+                context.input.workspaceId,
+                project.id,
+            );
 
             return {
                 data: mapProjectResult(archivedProject),
@@ -108,23 +133,15 @@ export function createProjectArchiveAction(executor: PostgresQueryExecutor) {
             };
         },
 
-        undo: async (context) => {
-            const snapshot = await context.snapshots.get<PreviousProjectStateSnapshot>(
-                PREVIOUS_PROJECT_STATE_SNAPSHOT_KEY,
+        checkConflicts: async (context) => {
+            assertDemoWorkspaceScope(context);
+
+            const snapshot = await readPreviousProjectStateSnapshot(context);
+            const currentProject = await getProjectOrThrow(
+                executor,
+                snapshot.value.workspaceId,
+                snapshot.value.projectId,
             );
-
-            if (snapshot === null) {
-                throw new RollbackKitError({
-                    code: 'SNAPSHOT_NOT_FOUND',
-                    message: 'Previous project state snapshot was not found.',
-                    details: {
-                        actionRunId: context.run.id,
-                        snapshotKey: PREVIOUS_PROJECT_STATE_SNAPSHOT_KEY,
-                    },
-                });
-            }
-
-            const currentProject = await getProjectOrThrow(executor, snapshot.value.projectId);
 
             if (currentProject.status !== 'archived') {
                 throw createProjectConflictError(
@@ -132,6 +149,12 @@ export function createProjectArchiveAction(executor: PostgresQueryExecutor) {
                     'Project is no longer archived, so undo would be unsafe.',
                 );
             }
+        },
+
+        undo: async (context) => {
+            assertDemoWorkspaceScope(context);
+
+            const snapshot = await readPreviousProjectStateSnapshot(context);
 
             const restoredProject = await restoreProject(executor, snapshot.value);
 
@@ -145,29 +168,60 @@ export function createProjectArchiveAction(executor: PostgresQueryExecutor) {
     });
 }
 
+async function readPreviousProjectStateSnapshot(context: {
+    readonly run: { readonly id: string };
+    readonly snapshots: {
+        get<TValue extends JsonObject>(key: string): Promise<{ readonly value: TValue } | null>;
+    };
+}): Promise<{ readonly value: PreviousProjectStateSnapshot }> {
+    const snapshot = await context.snapshots.get<PreviousProjectStateSnapshot>(
+        PREVIOUS_PROJECT_STATE_SNAPSHOT_KEY,
+    );
+
+    if (snapshot === null) {
+        throw new RollbackKitError({
+            code: 'SNAPSHOT_NOT_FOUND',
+            message: 'Previous project state snapshot was not found.',
+            details: {
+                actionRunId: context.run.id,
+                snapshotKey: PREVIOUS_PROJECT_STATE_SNAPSHOT_KEY,
+            },
+        });
+    }
+
+    return snapshot;
+}
+
 function parseProjectArchiveInput(input: unknown): ProjectArchiveInput {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) {
         throw new Error('Project archive input must be an object.');
     }
 
     const candidate = input as {
+        readonly workspaceId?: unknown;
         readonly projectId?: unknown;
     };
+
+    if (typeof candidate.workspaceId !== 'string' || candidate.workspaceId.trim() === '') {
+        throw new Error('Project archive input requires workspaceId.');
+    }
 
     if (typeof candidate.projectId !== 'string' || candidate.projectId.trim() === '') {
         throw new Error('Project archive input requires projectId.');
     }
 
     return {
+        workspaceId: candidate.workspaceId.trim(),
         projectId: candidate.projectId.trim(),
     } as ProjectArchiveInput;
 }
 
 async function getProjectOrThrow(
     executor: PostgresQueryExecutor,
+    workspaceId: string,
     projectId: string,
 ): Promise<DemoProjectRecord> {
-    const project = await findDemoProjectById(executor, projectId);
+    const project = await findDemoProjectById(executor, workspaceId, projectId);
 
     if (project === null) {
         throw new RollbackKitError({
@@ -184,11 +238,12 @@ async function getProjectOrThrow(
 
 async function archiveProject(
     executor: PostgresQueryExecutor,
+    workspaceId: string,
     projectId: string,
 ): Promise<DemoProjectRecord> {
-    await archiveDemoProject(executor, projectId);
+    await archiveDemoProject(executor, workspaceId, projectId);
 
-    return getProjectOrThrow(executor, projectId);
+    return getProjectOrThrow(executor, workspaceId, projectId);
 }
 
 async function restoreProject(
@@ -197,13 +252,14 @@ async function restoreProject(
 ): Promise<DemoProjectRecord> {
     await restoreDemoProject(executor, snapshot);
 
-    return getProjectOrThrow(executor, snapshot.projectId);
+    return getProjectOrThrow(executor, snapshot.workspaceId, snapshot.projectId);
 }
 
 function createPreviousProjectStateSnapshot(
     project: DemoProjectRecord,
 ): PreviousProjectStateSnapshot {
     return {
+        workspaceId: project.workspace_id,
         projectId: project.id,
         status: project.status,
         archivedAt: normalizeNullableDate(project.archived_at),

@@ -67,6 +67,7 @@ WHERE tenant_id = $1
             actor,
             tenantId: 'workspace_action_test',
             input: {
+                workspaceId: 'workspace_action_test',
                 memberId: 'member_action_role_target',
                 role: 'admin',
             },
@@ -91,6 +92,7 @@ WHERE tenant_id = $1
             actor,
             tenantId: 'workspace_action_test',
             input: {
+                workspaceId: 'workspace_action_test',
                 memberId: 'member_action_role_target',
                 role: 'admin',
             },
