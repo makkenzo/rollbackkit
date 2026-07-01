@@ -130,6 +130,9 @@ describe('MemoryStorageAdapter', () => {
         expect(sideEffect.type).toBe('email.sent');
         expect(conflict.id).toBe('conflict_3');
         expect(conflict.reason).toBe('Expected document to be archived, but it was deleted.');
+
+        await expect(storage.getSideEffects(run.id)).resolves.toEqual([sideEffect]);
+        await expect(storage.getConflicts(run.id)).resolves.toEqual([conflict]);
     });
 
     it('queries action history', async () => {

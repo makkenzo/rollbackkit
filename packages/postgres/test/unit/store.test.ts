@@ -588,6 +588,8 @@ describe('PostgresStore action runs', () => {
             now,
             '{"provider":"test"}',
         ]);
+
+        await expect(store.getSideEffects(run.id)).resolves.toEqual([sideEffect]);
     });
 
     it('preserves JSON null side effect payload separately from absent metadata', async () => {
@@ -723,6 +725,8 @@ describe('PostgresStore action runs', () => {
             '{"projectId":"project_1"}',
             now,
         ]);
+
+        await expect(store.getConflicts(run.id)).resolves.toEqual([conflict]);
     });
 
     it('records conflicts without optional details', async () => {

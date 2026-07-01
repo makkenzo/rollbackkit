@@ -15,7 +15,12 @@ import type { Clock } from '../shared/time';
 import { systemClock } from '../shared/time';
 import { createMemoryStorageAdapter } from '../storage/memory-storage';
 import type { Snapshot } from '../storage/snapshot';
-import type { ActionHistoryQuery, StorageAdapter } from '../storage/storage';
+import type {
+    ActionConflict,
+    ActionHistoryQuery,
+    ActionSideEffect,
+    StorageAdapter,
+} from '../storage/storage';
 import { parseActionInput } from './action-input';
 import { resolveActionTarget } from './action-target';
 import { authorizeAction } from './authorization';
@@ -350,6 +355,14 @@ export class RollbackKit {
 
     async getSnapshots(actionRunId: string): Promise<readonly Snapshot[]> {
         return this.#storage.getSnapshots(actionRunId);
+    }
+
+    async getSideEffects(actionRunId: string): Promise<readonly ActionSideEffect[]> {
+        return this.#storage.getSideEffects(actionRunId);
+    }
+
+    async getConflicts(actionRunId: string): Promise<readonly ActionConflict[]> {
+        return this.#storage.getConflicts(actionRunId);
     }
 
     async queryActionRuns(query: ActionHistoryQuery): Promise<readonly ActionRun[]> {

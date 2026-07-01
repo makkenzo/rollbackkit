@@ -132,7 +132,11 @@ export interface StorageAdapter {
         input: RecordSideEffectInput<TPayload>,
     ): Promise<ActionSideEffect<TPayload>>;
 
+    getSideEffects(actionRunId: string): Promise<readonly ActionSideEffect[]>;
+
     recordConflict(input: RecordConflictInput): Promise<ActionConflict>;
+
+    getConflicts(actionRunId: string): Promise<readonly ActionConflict[]>;
 
     queryActionRuns(query: ActionHistoryQuery): Promise<readonly ActionRun[]>;
 

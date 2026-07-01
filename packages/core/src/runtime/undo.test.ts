@@ -516,11 +516,13 @@ function createRollbackingActionRunLockStorage(): StorageAdapter & {
         recordSideEffect: <TPayload extends JsonValue = JsonValue>(
             input: RecordSideEffectInput<TPayload>,
         ) => storage.recordSideEffect(input),
+        getSideEffects: (actionRunId: string) => storage.getSideEffects(actionRunId),
         recordConflict: async (input) => {
             conflicts.push(input);
 
             return storage.recordConflict(input);
         },
+        getConflicts: (actionRunId: string) => storage.getConflicts(actionRunId),
         queryActionRuns: (query) => storage.queryActionRuns(query),
         withActionRunLock: async <TValue>(
             actionRunId: string,

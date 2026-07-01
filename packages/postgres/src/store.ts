@@ -410,6 +410,20 @@ RETURNING ${SIDE_EFFECT_COLUMNS_SQL}
         return mapActionSideEffectRow(row) as ActionSideEffect<TPayload>;
     }
 
+    async getSideEffects(actionRunId: string): Promise<readonly ActionSideEffect[]> {
+        const result = await this.#executor.query<ActionSideEffectRow>(
+            `
+SELECT ${SIDE_EFFECT_COLUMNS_SQL}
+FROM rollbackkit_side_effects
+WHERE action_run_id = $1
+ORDER BY created_at ASC, id ASC
+`,
+            [actionRunId],
+        );
+
+        return result.rows.map(mapActionSideEffectRow);
+    }
+
     async recordConflict(input: RecordConflictInput): Promise<ActionConflict> {
         const id = createRollbackKitPostgresId('conflict');
         const createdAt = this.#clock.now();
@@ -450,6 +464,20 @@ RETURNING ${CONFLICT_COLUMNS_SQL}
         }
 
         return mapActionConflictRow(row);
+    }
+
+    async getConflicts(actionRunId: string): Promise<readonly ActionConflict[]> {
+        const result = await this.#executor.query<ActionConflictRow>(
+            `
+SELECT ${CONFLICT_COLUMNS_SQL}
+FROM rollbackkit_conflicts
+WHERE action_run_id = $1
+ORDER BY created_at ASC, id ASC
+`,
+            [actionRunId],
+        );
+
+        return result.rows.map(mapActionConflictRow);
     }
 
     async queryActionRuns(query: ActionHistoryQuery): Promise<readonly ActionRun[]> {

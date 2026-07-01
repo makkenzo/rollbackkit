@@ -163,6 +163,10 @@ export class MemoryStorageAdapter implements StorageAdapter {
         return sideEffect;
     }
 
+    async getSideEffects(actionRunId: string): Promise<readonly ActionSideEffect[]> {
+        return [...(this.#sideEffectsByActionRunId.get(actionRunId) ?? [])];
+    }
+
     async recordConflict(input: RecordConflictInput): Promise<ActionConflict> {
         this.#requireActionRun(input.actionRunId);
 
@@ -180,6 +184,10 @@ export class MemoryStorageAdapter implements StorageAdapter {
         this.#conflictsByActionRunId.set(input.actionRunId, conflicts);
 
         return conflict;
+    }
+
+    async getConflicts(actionRunId: string): Promise<readonly ActionConflict[]> {
+        return [...(this.#conflictsByActionRunId.get(actionRunId) ?? [])];
     }
 
     async queryActionRuns(query: ActionHistoryQuery): Promise<readonly ActionRun[]> {

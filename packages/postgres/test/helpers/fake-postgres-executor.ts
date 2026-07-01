@@ -168,6 +168,16 @@ export class FakePostgresExecutor implements PostgresQueryExecutor {
             return createQueryResult([row] as unknown as TResult[]);
         }
 
+        if (
+            text.includes('FROM rollbackkit_side_effects') &&
+            text.includes('WHERE action_run_id = $1')
+        ) {
+            const actionRunId = String(values?.[0]);
+            const rows = this.sideEffectRows.get(actionRunId) ?? [];
+
+            return createQueryResult([...rows] as unknown as TResult[]);
+        }
+
         if (text.includes('INSERT INTO rollbackkit_conflicts')) {
             if (values === undefined) {
                 throw new Error('Expected conflict insert query values.');
@@ -180,6 +190,16 @@ export class FakePostgresExecutor implements PostgresQueryExecutor {
             this.conflictRows.set(row.action_run_id, conflicts);
 
             return createQueryResult([row] as unknown as TResult[]);
+        }
+
+        if (
+            text.includes('FROM rollbackkit_conflicts') &&
+            text.includes('WHERE action_run_id = $1')
+        ) {
+            const actionRunId = String(values?.[0]);
+            const rows = this.conflictRows.get(actionRunId) ?? [];
+
+            return createQueryResult([...rows] as unknown as TResult[]);
         }
 
         if (text.includes('FROM rollbackkit_action_runs') && text.includes('WHERE id = $1')) {
