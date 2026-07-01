@@ -48,6 +48,29 @@ The framework does not guess how to roll back arbitrary database writes. You def
 
 Planned v0.x packages include `@rollbackkit/react`, `@rollbackkit/next` and `@rollbackkit/testkit`. They will be created after the app-local patterns are stable.
 
+## Install
+
+```bash
+pnpm add @rollbackkit/core
+```
+
+For durable PostgreSQL storage and migrations:
+
+```bash
+pnpm add @rollbackkit/core @rollbackkit/postgres pg
+pnpm add -D @rollbackkit/cli
+```
+
+RollbackKit currently targets Node.js 22 or newer and ESM projects.
+
+## Getting Started
+
+1. Define a product action with `defineAction`.
+2. Preview the impact before mutation.
+3. Execute the action through `createRollbackKit`.
+4. Save snapshots from the execute handler when undo needs previous state.
+5. Provide an undo handler for actions that are truly reversible.
+
 ## Action Shape
 
 An action definition owns the complete safety story for one product operation:
@@ -182,6 +205,9 @@ RollbackKit is not:
 
 If an action cannot be safely undone, RollbackKit should make that explicit instead of pretending otherwise.
 
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 

@@ -4,6 +4,26 @@
     "version": "0.0.0",
     "description": "TypeScript framework for building reversible product actions with preview, audit and undo.",
     "type": "module",
+    "homepage": "https://github.com/makkenzo/rollbackkit#readme",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/makkenzo/rollbackkit.git"
+    },
+    "bugs": {
+        "url": "https://github.com/makkenzo/rollbackkit/issues"
+    },
+    "funding": {
+        "type": "ko-fi",
+        "url": "https://ko-fi.com/makkenzo"
+    },
+    "keywords": [
+        "rollback",
+        "undo",
+        "audit",
+        "typescript",
+        "postgresql",
+        "saas"
+    ],
     "engines": {
         "node": ">=22"
     },

@@ -4,6 +4,29 @@
     "description": "PostgreSQL storage adapter for RollbackKit.",
     "license": "MIT",
     "type": "module",
+    "homepage": "https://github.com/makkenzo/rollbackkit#readme",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/makkenzo/rollbackkit.git",
+        "directory": "packages/postgres"
+    },
+    "bugs": {
+        "url": "https://github.com/makkenzo/rollbackkit/issues"
+    },
+    "funding": {
+        "type": "ko-fi",
+        "url": "https://ko-fi.com/makkenzo"
+    },
+    "keywords": [
+        "rollback",
+        "undo",
+        "audit",
+        "postgresql",
+        "typescript"
+    ],
+    "engines": {
+        "node": ">=22"
+    },
     "sideEffects": false,
     "types": "./dist/index.d.mts",
     "main": "./dist/index.mjs",
