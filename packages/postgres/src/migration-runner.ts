@@ -112,6 +112,8 @@ export class PostgresMigrationRunner {
             return this.#createMigrationStatus([], false);
         }
 
+        await this.#ensureSchemaMigrationChecksums();
+
         return this.#createMigrationStatus(await this.#readAppliedMigrations(), true);
     }
 
@@ -192,7 +194,23 @@ export class PostgresMigrationRunner {
 
     async #ensureSchemaMigrationsTable(): Promise<void> {
         await this.#executor.query(SCHEMA_MIGRATIONS_TABLE_SQL);
+        await this.#ensureSchemaMigrationChecksums();
+    }
+
+    async #ensureSchemaMigrationChecksums(): Promise<void> {
         await this.#executor.query(SCHEMA_MIGRATIONS_CHECKSUM_COLUMN_SQL);
+
+        for (const migration of this.#migrations) {
+            await this.#executor.query(
+                `
+UPDATE rollbackkit_schema_migrations
+SET checksum = $2
+WHERE id = $1
+  AND (checksum IS NULL OR btrim(checksum) = '')
+`,
+                [migration.id, createMigrationChecksum(migration)],
+            );
+        }
     }
 
     async #readSchemaMigrationsTableExists(): Promise<boolean> {

@@ -124,6 +124,46 @@ describe('@rollbackkit/postgres', () => {
         ]);
     });
 
+    it('backfills checksums for known migrations applied before checksum tracking', async () => {
+        const executor = new FakePostgresExecutor(
+            [
+                {
+                    id: '0001_initial_schema',
+                    applied_at: '2026-01-01T00:00:00.000Z',
+                },
+            ],
+            {
+                schemaMigrationsTableExists: true,
+            },
+        );
+
+        const runner = createPostgresMigrationRunner({ executor });
+
+        const result = await runner.migrate();
+
+        expect(result.applied.map((migration) => migration.id)).toEqual([
+            '0002_action_run_idempotency',
+        ]);
+        expect(result.skipped.map((migration) => migration.id)).toEqual(['0001_initial_schema']);
+        expect(executor.schemaMigrationRows).toEqual([
+            {
+                id: '0001_initial_schema',
+                checksum: createMigrationChecksum('0001_initial_schema'),
+                applied_at: '2026-01-01T00:00:00.000Z',
+            },
+            {
+                id: '0002_action_run_idempotency',
+                checksum: createMigrationChecksum('0002_action_run_idempotency'),
+                applied_at: new Date('2026-01-01T00:00:00.000Z'),
+            },
+        ]);
+        expect(
+            executor.queries.some((query) =>
+                query.text.includes('UPDATE rollbackkit_schema_migrations'),
+            ),
+        ).toBe(true);
+    });
+
     it('rechecks pending migrations after acquiring the migration lock', async () => {
         class ConcurrentMigrationExecutor extends FakePostgresExecutor {
             override async query<TResult extends QueryResultRow = QueryResultRow>(

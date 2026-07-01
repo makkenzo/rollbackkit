@@ -97,6 +97,22 @@ export class FakePostgresExecutor implements PostgresQueryExecutor {
             return createQueryResult([]);
         }
 
+        if (text.includes('UPDATE rollbackkit_schema_migrations') && values !== undefined) {
+            const id = String(values[0]);
+            const checksum = String(values[1]);
+            const rowIndex = this.schemaMigrationRows.findIndex((row) => row.id === id);
+            const row = this.schemaMigrationRows[rowIndex];
+
+            if (row !== undefined && (row.checksum === undefined || row.checksum.trim() === '')) {
+                this.schemaMigrationRows[rowIndex] = {
+                    ...row,
+                    checksum,
+                };
+            }
+
+            return createQueryResult([]);
+        }
+
         if (text.includes('INSERT INTO rollbackkit_action_runs')) {
             if (values === undefined) {
                 throw new Error('Expected action run insert query values.');
