@@ -212,3 +212,7 @@ details.
 - [Why rollback-first](./WHY_ROLLBACK_FIRST.md)
 - [Core Lifecycle](./CORE_LIFECYCLE.md)
 - [PostgreSQL Setup](./POSTGRESQL_SETUP.md)
+- [Recipes](./recipes/README.md)
+- [Soft Delete With Undo](./recipes/SOFT_DELETE_WITH_UNDO.md)
+- [Change User Role Safely](./recipes/CHANGE_USER_ROLE.md)
+- [Remove Workspace Member With Undo](./recipes/REMOVE_WORKSPACE_MEMBER.md)

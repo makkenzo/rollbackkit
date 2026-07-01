@@ -235,6 +235,10 @@ Planned demo scenarios include document archive, customer import rollback, confl
 - [Getting started](./apps/docs/GETTING_STARTED.md)
 - [PostgreSQL setup](./apps/docs/POSTGRESQL_SETUP.md)
 - [Demo app](./apps/docs/DEMO_APP.md)
+- [Recipes](./apps/docs/recipes/README.md)
+- [Soft delete with undo](./apps/docs/recipes/SOFT_DELETE_WITH_UNDO.md)
+- [Change user role safely](./apps/docs/recipes/CHANGE_USER_ROLE.md)
+- [Remove workspace member with undo](./apps/docs/recipes/REMOVE_WORKSPACE_MEMBER.md)
 
 ## PostgreSQL Migrations
 

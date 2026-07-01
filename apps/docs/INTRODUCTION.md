@@ -44,5 +44,11 @@ Read [Why rollback-first](./WHY_ROLLBACK_FIRST.md) if you want the product and a
 
 Read [Getting started](./GETTING_STARTED.md) if you want to define and run your first action.
 
+Read [Recipes](./recipes/README.md) when you want concrete product patterns:
+
+- [Soft Delete With Undo](./recipes/SOFT_DELETE_WITH_UNDO.md)
+- [Change User Role Safely](./recipes/CHANGE_USER_ROLE.md)
+- [Remove Workspace Member With Undo](./recipes/REMOVE_WORKSPACE_MEMBER.md)
+
 Read [PostgreSQL Setup](./POSTGRESQL_SETUP.md) when you are ready to persist action runs and
 snapshots.
