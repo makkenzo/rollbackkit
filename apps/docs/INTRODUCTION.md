@@ -55,3 +55,6 @@ Read [PostgreSQL Setup](./POSTGRESQL_SETUP.md) when you are ready to persist act
 snapshots.
 
 Read [Security Baseline](./SECURITY.md) before using RollbackKit with production data.
+
+Read [Troubleshooting](./TROUBLESHOOTING.md) if setup, migrations, demo reset or undo does not
+behave as expected.

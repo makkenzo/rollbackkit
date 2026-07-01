@@ -12,10 +12,10 @@ This demo shows a small workspace with projects, members and documents. It is de
 Create a local environment file:
 
 ```bash
-cp apps/demo-next/.env.example apps/demo-next/.env.local
+cp apps/demo-next/.env.example apps/demo-next/.env
 ```
 
-Set the demo database URL:
+Edit `apps/demo-next/.env` and set the demo database URL:
 
 ```bash
 ROLLBACKKIT_DEMO_DATABASE_URL="postgres://user:password@localhost:5432/rollbackkit_test"
@@ -80,3 +80,8 @@ The demo keeps product state and RollbackKit lifecycle state separate:
 
 * product tables store workspace, members, projects and documents;
 * RollbackKit tables store action runs, snapshots, side effects, conflicts and audit history.
+
+## Troubleshooting
+
+See [Troubleshooting](../docs/TROUBLESHOOTING.md) for database URL, migration checksum, workspace
+build, idempotency and undo errors.

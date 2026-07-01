@@ -30,3 +30,5 @@ permissions, action-history UI, undo toast behavior and cleanup of expired snaps
 - [Architecture](../ARCHITECTURE.md)
 - [Package Boundaries](../PACKAGE_BOUNDARIES.md)
 - [Demo App](../DEMO_APP.md)
+- [Security Baseline](../SECURITY.md)
+- [Troubleshooting](../TROUBLESHOOTING.md)

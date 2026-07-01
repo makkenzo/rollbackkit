@@ -1,4 +1,3 @@
-
 # PostgreSQL Setup
 
 RollbackKit uses PostgreSQL as the first official persistent storage adapter.
@@ -26,7 +25,6 @@ Example local connection string:
 ```bash
 postgres://user:password@localhost:5432/app_database
 ```
-
 
 Replace it with your own database URL.
 
@@ -322,6 +320,10 @@ pnpm --filter @rollbackkit/demo-next db:reset
 ```
 
 ## Troubleshooting
+
+This section covers PostgreSQL-specific setup issues. For workspace build errors, demo database
+setup, migration checksum errors, idempotency conflicts and undo refusal, see
+[Troubleshooting](./TROUBLESHOOTING.md).
 
 ### Missing database URL
 

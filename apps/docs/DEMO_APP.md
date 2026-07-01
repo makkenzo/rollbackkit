@@ -88,6 +88,14 @@ The demo uses both layers:
 
 ## Local setup
 
+For repeated local commands, copy the demo env example:
+
+```bash
+cp apps/demo-next/.env.example apps/demo-next/.env
+```
+
+Then edit `apps/demo-next/.env` with your local `ROLLBACKKIT_DEMO_DATABASE_URL`.
+
 Prepare the demo database:
 
 ```bash
@@ -126,3 +134,10 @@ pnpm typecheck
 pnpm test
 pnpm build
 ```
+
+## Related Pages
+
+- [Getting Started](./GETTING_STARTED.md)
+- [PostgreSQL Setup](./POSTGRESQL_SETUP.md)
+- [Troubleshooting](./TROUBLESHOOTING.md)
+- [Security Baseline](./SECURITY.md)

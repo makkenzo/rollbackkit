@@ -52,3 +52,6 @@ const rollbackkit = createRollbackKit({
 
 For undo flows, pass a single PostgreSQL connection executor such as `pg.Client` or `pg.PoolClient`.
 Do not pass a bare `pg.Pool` directly to `createPostgresStore`.
+
+For migration, checksum and connection errors, see
+[Troubleshooting](../../apps/docs/TROUBLESHOOTING.md).

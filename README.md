@@ -235,6 +235,7 @@ Planned demo scenarios include document archive, customer import rollback, confl
 - [Getting started](./apps/docs/GETTING_STARTED.md)
 - [Security baseline](./apps/docs/SECURITY.md)
 - [PostgreSQL setup](./apps/docs/POSTGRESQL_SETUP.md)
+- [Troubleshooting](./apps/docs/TROUBLESHOOTING.md)
 - [Demo app](./apps/docs/DEMO_APP.md)
 - [Recipes](./apps/docs/recipes/README.md)
 - [Soft delete with undo](./apps/docs/recipes/SOFT_DELETE_WITH_UNDO.md)

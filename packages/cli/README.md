@@ -32,3 +32,5 @@ pnpm exec rollbackkit doctor --database-url "postgres://user:password@localhost:
 
 The CLI exits with `0` on success and `1` on failure. Use `--verbose` to print stack traces and
 nested causes for debugging.
+
+For common setup errors, see [Troubleshooting](../../apps/docs/TROUBLESHOOTING.md).

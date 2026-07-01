@@ -197,6 +197,9 @@ const rollbackkit = createRollbackKit({
 See [PostgreSQL Setup](./POSTGRESQL_SETUP.md) for migration commands, locking notes and table
 details.
 
+If a setup command fails, see [Troubleshooting](./TROUBLESHOOTING.md) for the common database URL,
+workspace build, migration checksum, idempotency and undo errors.
+
 ## Common Mistakes
 
 - Do not mutate product state in `preview`.
@@ -214,6 +217,7 @@ details.
 - [Core Lifecycle](./CORE_LIFECYCLE.md)
 - [Security Baseline](./SECURITY.md)
 - [PostgreSQL Setup](./POSTGRESQL_SETUP.md)
+- [Troubleshooting](./TROUBLESHOOTING.md)
 - [Recipes](./recipes/README.md)
 - [Soft Delete With Undo](./recipes/SOFT_DELETE_WITH_UNDO.md)
 - [Change User Role Safely](./recipes/CHANGE_USER_ROLE.md)
