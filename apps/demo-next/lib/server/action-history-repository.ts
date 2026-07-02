@@ -1,26 +1,11 @@
 import 'server-only';
 
 import type { ActionRun } from '@rollbackkit/core';
-
+import type { DemoActionHistoryEntry, DemoActionHistoryTone } from '../demo/view-models';
 import type { DemoActionConflictDto } from '../demo-action-types';
 import { getLatestDemoActionConflict } from './conflict-summary';
 import { DEMO_TENANT_ID } from './demo-request-context';
 import { withDemoRollbackKit } from './rollbackkit';
-
-export type DemoActionHistoryTone = 'neutral' | 'success' | 'warning' | 'danger';
-
-export interface DemoActionHistoryEntry {
-    readonly id: string;
-    readonly actionName: string;
-    readonly targetLabel: string;
-    readonly actorLabel: string;
-    readonly statusLabel: string;
-    readonly statusTone: DemoActionHistoryTone;
-    readonly occurredAt: string;
-    readonly canUndo: boolean;
-    readonly undoExpiresAt?: string;
-    readonly conflict?: DemoActionConflictDto;
-}
 
 export async function getDemoActionHistory(limit = 8): Promise<readonly DemoActionHistoryEntry[]> {
     const now = new Date();

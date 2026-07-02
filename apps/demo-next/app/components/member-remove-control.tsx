@@ -1,11 +1,10 @@
 'use client';
 
+import type { DemoMemberRole } from '@/lib/demo/view-models';
 import { executeMemberRemove, previewMemberRemove } from '../actions/member-remove';
 import { ActionPreviewDialog } from './action-preview-dialog';
 import { createDemoIdempotencyKey } from './demo-idempotency-key';
 import { usePreviewableDemoAction } from './use-previewable-demo-action';
-
-type DemoMemberRole = 'Owner' | 'Admin' | 'Viewer';
 
 interface MemberRemoveControlProps {
     readonly memberId: string;
@@ -14,7 +13,7 @@ interface MemberRemoveControlProps {
 }
 
 export function MemberRemoveControl({ memberId, memberName, role }: MemberRemoveControlProps) {
-    const isOwner = role === 'Owner';
+    const isOwner = role === 'owner';
     const action = usePreviewableDemoAction({
         createIdempotencyKey: () => createDemoIdempotencyKey(`member.remove:${memberId}`),
         preview: () => previewMemberRemove(memberId),

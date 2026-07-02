@@ -1,5 +1,6 @@
 'use client';
 
+import type { DemoProjectStatus } from '@/lib/demo/view-models';
 import { executeProjectArchive, previewProjectArchive } from '../actions/project-archive';
 import { ActionPreviewDialog } from './action-preview-dialog';
 import { createDemoIdempotencyKey } from './demo-idempotency-key';
@@ -8,7 +9,7 @@ import { usePreviewableDemoAction } from './use-previewable-demo-action';
 interface ProjectArchiveControlProps {
     readonly projectId: string;
     readonly projectName: string;
-    readonly status: 'Active' | 'Archived';
+    readonly status: DemoProjectStatus;
 }
 
 export function ProjectArchiveControl({
@@ -16,7 +17,7 @@ export function ProjectArchiveControl({
     projectName,
     status,
 }: ProjectArchiveControlProps) {
-    const isArchived = status === 'Archived';
+    const isArchived = status === 'archived';
     const action = usePreviewableDemoAction({
         createIdempotencyKey: () => createDemoIdempotencyKey(`project.archive:${projectId}`),
         preview: () => previewProjectArchive(projectId),

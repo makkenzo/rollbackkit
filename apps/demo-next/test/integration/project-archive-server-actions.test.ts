@@ -1,14 +1,23 @@
+import type { ActionActor } from '@rollbackkit/core';
 import { createPostgresMigrationRunner } from '@rollbackkit/postgres';
 import { Client } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { undoDemoActionRun } from '../../app/actions/action-runs';
 import { executeProjectArchive, previewProjectArchive } from '../../app/actions/project-archive';
+import { PROJECT_ARCHIVE_ACTION_NAME } from '../../lib/server/actions/project-archive.action';
 import { closeDemoPostgresPool } from '../../lib/server/demo-db';
+import { createDemoRollbackKit } from '../../lib/server/rollbackkit';
 import { readDemoSql } from '../helpers/demo-sql';
 
 const databaseUrl = process.env.ROLLBACKKIT_DEMO_DATABASE_URL ?? process.env.DATABASE_URL;
 const describeIntegration = databaseUrl === undefined ? describe.skip : describe;
+
+const actor: ActionActor = {
+    id: 'member_ada',
+    type: 'user',
+    displayName: 'Ada Lovelace',
+};
 
 let client: Client | undefined;
 
@@ -40,10 +49,9 @@ describeIntegration('project.archive server actions', () => {
             .query(
                 `
 DELETE FROM rollbackkit_action_runs
-WHERE tenant_id = $1
-  AND target_id = $2
+WHERE target_id IN ($1, $2)
 `,
-                ['workspace_acme', 'project_server_action_archive_target'],
+                ['project_server_action_archive_target', 'project_server_action_hidden_target'],
             )
             .catch(() => undefined);
 
@@ -61,9 +69,19 @@ WHERE id = $1
             .query(
                 `
 DELETE FROM demo_projects
+WHERE id IN ($1, $2)
+`,
+                ['project_server_action_archive_target', 'project_server_action_hidden_target'],
+            )
+            .catch(() => undefined);
+
+        await client
+            .query(
+                `
+DELETE FROM demo_workspaces
 WHERE id = $1
 `,
-                ['project_server_action_archive_target'],
+                ['workspace_server_action_hidden'],
             )
             .catch(() => undefined);
 
@@ -150,6 +168,36 @@ WHERE id = $1
             },
         });
     });
+
+    it('refuses to undo a run outside the demo request tenant', async () => {
+        const currentClient = requireClient();
+        const rollbackkit = createDemoRollbackKit(currentClient);
+
+        await seedHiddenTenantProject(currentClient);
+
+        const hiddenRun = await rollbackkit.execute({
+            name: PROJECT_ARCHIVE_ACTION_NAME,
+            actor,
+            tenantId: 'workspace_server_action_hidden',
+            input: {
+                workspaceId: 'workspace_server_action_hidden',
+                projectId: 'project_server_action_hidden_target',
+            },
+        });
+
+        const response = await undoDemoActionRun(hiddenRun.id);
+
+        expect(response).toEqual({
+            ok: false,
+            error: {
+                code: 'ACTION_PERMISSION_DENIED',
+                message: `Action run "${hiddenRun.id}" does not belong to the current demo tenant.`,
+            },
+        });
+        await expect(readProjectStatus('project_server_action_hidden_target')).resolves.toBe(
+            'archived',
+        );
+    });
 });
 
 async function seedServerActionProject(executor: Client): Promise<void> {
@@ -213,6 +261,51 @@ SET
     owner_member_id = EXCLUDED.owner_member_id,
     title = EXCLUDED.title,
     state = EXCLUDED.state,
+    archived_at = EXCLUDED.archived_at,
+    updated_at = EXCLUDED.updated_at,
+    created_at = EXCLUDED.created_at;
+`);
+}
+
+async function seedHiddenTenantProject(executor: Client): Promise<void> {
+    await executor.query(`
+INSERT INTO demo_workspaces (id, slug, name)
+VALUES (
+    'workspace_server_action_hidden',
+    'server-action-hidden',
+    'Server Action Hidden Workspace'
+)
+ON CONFLICT (id) DO UPDATE
+SET
+    slug = EXCLUDED.slug,
+    name = EXCLUDED.name;
+
+INSERT INTO demo_projects (
+    id,
+    workspace_id,
+    name,
+    owner_member_id,
+    status,
+    archived_at,
+    updated_at,
+    created_at
+)
+VALUES (
+    'project_server_action_hidden_target',
+    'workspace_server_action_hidden',
+    'Server Action Hidden Target',
+    NULL,
+    'active',
+    NULL,
+    '2026-01-01T00:30:00.000Z',
+    '2026-01-01T00:25:00.000Z'
+)
+ON CONFLICT (id) DO UPDATE
+SET
+    workspace_id = EXCLUDED.workspace_id,
+    name = EXCLUDED.name,
+    owner_member_id = EXCLUDED.owner_member_id,
+    status = EXCLUDED.status,
     archived_at = EXCLUDED.archived_at,
     updated_at = EXCLUDED.updated_at,
     created_at = EXCLUDED.created_at;

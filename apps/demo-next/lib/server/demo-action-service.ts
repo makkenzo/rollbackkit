@@ -1,14 +1,60 @@
 import 'server-only';
 
-import { type ActionRun, isRollbackKitError } from '@rollbackkit/core';
+import {
+    type ActionRun,
+    type ExecuteActionRequest,
+    isRollbackKitError,
+    type PreviewActionRequest,
+    type PreviewResult,
+} from '@rollbackkit/core';
 import type {
     DemoActionConflictDto,
     DemoActionError,
     DemoActionResponse,
     DemoActionRunDto,
 } from '../demo-action-types';
+import type { DemoRequestContext } from './demo-request-context';
+import { withDemoRollbackKit } from './rollbackkit';
 
 export type { DemoActionError, DemoActionResponse, DemoActionRunDto };
+
+export async function previewDemoAction(
+    actionName: string,
+    input: PreviewActionRequest['input'],
+    context: DemoRequestContext,
+): Promise<DemoActionResponse<PreviewResult>> {
+    return runDemoAction(async () =>
+        withDemoRollbackKit(async ({ rollbackkit }) =>
+            rollbackkit.preview({
+                name: actionName,
+                actor: context.actor,
+                tenantId: context.tenantId,
+                input,
+            }),
+        ),
+    );
+}
+
+export async function executeDemoAction(
+    actionName: string,
+    input: ExecuteActionRequest['input'],
+    idempotencyKey: string,
+    context: DemoRequestContext,
+): Promise<DemoActionResponse<DemoActionRunDto>> {
+    return runDemoAction(async () =>
+        withDemoRollbackKit(async ({ rollbackkit }) => {
+            const run = await rollbackkit.execute({
+                name: actionName,
+                actor: context.actor,
+                tenantId: context.tenantId,
+                idempotencyKey,
+                input,
+            });
+
+            return serializeActionRun(run);
+        }),
+    );
+}
 
 export async function runDemoAction<TData>(
     handler: () => Promise<TData>,

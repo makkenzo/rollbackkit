@@ -3,6 +3,7 @@ import 'server-only';
 import type { QueryResultRow } from 'pg';
 
 import type {
+    DemoDashboardData,
     DemoDocument,
     DemoDocumentState,
     DemoMember,
@@ -10,17 +11,10 @@ import type {
     DemoProject,
     DemoProjectStatus,
     DemoWorkspace,
-} from '../demo-domain';
+} from '../demo/view-models';
 import { getDemoPostgresPool } from './demo-db';
 
 const WORKSPACE_SLUG = 'acme-cloud';
-
-export interface DemoDashboardData {
-    readonly workspace: DemoWorkspace;
-    readonly projects: readonly DemoProject[];
-    readonly members: readonly DemoMember[];
-    readonly documents: readonly DemoDocument[];
-}
 
 interface WorkspaceRow extends QueryResultRow {
     readonly id: string;
@@ -32,7 +26,7 @@ interface ProjectRow extends QueryResultRow {
     readonly id: string;
     readonly name: string;
     readonly owner: string | null;
-    readonly status: 'active' | 'archived';
+    readonly status: DemoProjectStatus;
     readonly updated_at: Date | string;
 }
 
@@ -40,14 +34,14 @@ interface MemberRow extends QueryResultRow {
     readonly id: string;
     readonly name: string;
     readonly email: string;
-    readonly role: 'owner' | 'admin' | 'viewer';
+    readonly role: DemoMemberRole;
 }
 
 interface DocumentRow extends QueryResultRow {
     readonly id: string;
     readonly title: string;
     readonly owner: string | null;
-    readonly state: 'published' | 'draft' | 'archived';
+    readonly state: DemoDocumentState;
 }
 
 export async function getDemoDashboardData(): Promise<DemoDashboardData> {
@@ -149,7 +143,8 @@ function mapProject(row: ProjectRow): DemoProject {
         id: row.id,
         name: row.name,
         owner: row.owner ?? 'Unassigned',
-        status: formatProjectStatus(row.status),
+        status: row.status,
+        statusLabel: formatProjectStatusLabel(row.status),
         updatedAt: formatDate(row.updated_at),
     };
 }
@@ -159,7 +154,8 @@ function mapMember(row: MemberRow): DemoMember {
         id: row.id,
         name: row.name,
         email: row.email,
-        role: formatMemberRole(row.role),
+        role: row.role,
+        roleLabel: formatMemberRoleLabel(row.role),
     };
 }
 
@@ -168,11 +164,12 @@ function mapDocument(row: DocumentRow): DemoDocument {
         id: row.id,
         title: row.title,
         owner: row.owner ?? 'Unassigned',
-        state: formatDocumentState(row.state),
+        state: row.state,
+        stateLabel: formatDocumentStateLabel(row.state),
     };
 }
 
-function formatProjectStatus(status: ProjectRow['status']): DemoProjectStatus {
+function formatProjectStatusLabel(status: DemoProjectStatus): string {
     switch (status) {
         case 'active':
             return 'Active';
@@ -181,7 +178,7 @@ function formatProjectStatus(status: ProjectRow['status']): DemoProjectStatus {
     }
 }
 
-function formatMemberRole(role: MemberRow['role']): DemoMemberRole {
+function formatMemberRoleLabel(role: DemoMemberRole): string {
     switch (role) {
         case 'owner':
             return 'Owner';
@@ -192,7 +189,7 @@ function formatMemberRole(role: MemberRow['role']): DemoMemberRole {
     }
 }
 
-function formatDocumentState(state: DocumentRow['state']): DemoDocumentState {
+function formatDocumentStateLabel(state: DemoDocumentState): string {
     switch (state) {
         case 'published':
             return 'Published';

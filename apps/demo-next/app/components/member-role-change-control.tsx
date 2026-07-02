@@ -1,12 +1,10 @@
 'use client';
 
+import type { DemoEditableMemberRole, DemoMemberRole } from '@/lib/demo/view-models';
 import { executeMemberRoleChange, previewMemberRoleChange } from '../actions/member-change-role';
 import { ActionPreviewDialog } from './action-preview-dialog';
 import { createDemoIdempotencyKey } from './demo-idempotency-key';
 import { usePreviewableDemoAction } from './use-previewable-demo-action';
-
-type DemoMemberRole = 'Owner' | 'Admin' | 'Viewer';
-type EditableMemberRole = 'admin' | 'viewer';
 
 interface MemberRoleChangeControlProps {
     readonly memberId: string;
@@ -77,18 +75,18 @@ export function MemberRoleChangeControl({
     );
 }
 
-function getTargetRole(role: DemoMemberRole): EditableMemberRole | null {
+function getTargetRole(role: DemoMemberRole): DemoEditableMemberRole | null {
     switch (role) {
-        case 'Admin':
+        case 'admin':
             return 'viewer';
-        case 'Viewer':
+        case 'viewer':
             return 'admin';
-        case 'Owner':
+        case 'owner':
             return null;
     }
 }
 
-function formatEditableRole(role: EditableMemberRole): string {
+function formatEditableRole(role: DemoEditableMemberRole): string {
     switch (role) {
         case 'admin':
             return 'Admin';

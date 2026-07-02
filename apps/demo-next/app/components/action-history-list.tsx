@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import type { DemoActionHistoryEntry } from '../../lib/demo/view-models';
 import type { DemoActionConflictDto } from '../../lib/demo-action-types';
-import type { DemoActionHistoryEntry } from '../../lib/server/action-history-repository';
 import { undoDemoActionRun } from '../actions/action-runs';
 
 interface ActionHistoryListProps {

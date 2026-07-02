@@ -46,19 +46,25 @@ describeIntegration('demo repository', () => {
         ]);
 
         expect(dashboard.projects.map((project) => project.status)).toEqual([
+            'active',
+            'active',
+            'archived',
+        ]);
+
+        expect(dashboard.projects.map((project) => project.statusLabel)).toEqual([
             'Active',
             'Active',
             'Archived',
         ]);
 
-        expect(dashboard.members.map((member) => `${member.name}:${member.role}`)).toEqual([
+        expect(dashboard.members.map((member) => `${member.name}:${member.roleLabel}`)).toEqual([
             'Ada Lovelace:Owner',
             'Grace Hopper:Admin',
             'Alan Turing:Viewer',
         ]);
 
         expect(
-            dashboard.documents.map((document) => `${document.title}:${document.state}`),
+            dashboard.documents.map((document) => `${document.title}:${document.stateLabel}`),
         ).toEqual([
             'Security Review Notes:Published',
             'Bulk Import Checklist:Draft',

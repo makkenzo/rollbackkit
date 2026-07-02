@@ -1,7 +1,12 @@
 import type { ReactNode } from 'react';
-import type { DemoMember, DemoPreviewImpact, DemoProject } from '@/lib/demo-domain';
-import type { DemoActionHistoryEntry } from '@/lib/server/action-history-repository';
-import type { DemoDashboardData } from '@/lib/server/demo-repository';
+import type {
+    DemoActionHistoryEntry,
+    DemoDashboardData,
+    DemoDocument,
+    DemoMember,
+    DemoPreviewImpact,
+    DemoProject,
+} from '@/lib/demo/view-models';
 import { ActionHistoryList } from './action-history-list';
 import { MemberRemoveControl } from './member-remove-control';
 import { MemberRoleChangeControl } from './member-role-change-control';
@@ -13,7 +18,7 @@ interface DemoDashboardProps {
 }
 
 export function DemoDashboard({ dashboard, actionHistory }: DemoDashboardProps) {
-    const previewProject = dashboard.projects.find((project) => project.status === 'Active');
+    const previewProject = dashboard.projects.find((project) => project.status === 'active');
     const previewProjectName = previewProject?.name ?? 'an active project';
 
     return (
@@ -108,7 +113,7 @@ export function DemoDashboard({ dashboard, actionHistory }: DemoDashboardProps) 
                                 document.id,
                                 document.title,
                                 document.owner,
-                                document.state,
+                                document.stateLabel,
                             ])}
                         />
                     </DataPanel>
@@ -201,7 +206,7 @@ function ProjectsTable({ projects }: ProjectsTableProps) {
                             <td>{project.id}</td>
                             <td>{project.name}</td>
                             <td>{project.owner}</td>
-                            <td>{project.status}</td>
+                            <td>{project.statusLabel}</td>
                             <td>{project.updatedAt}</td>
                             <td className="actions-column">
                                 <ProjectArchiveControl
@@ -243,7 +248,7 @@ function MembersTable({ members }: MembersTableProps) {
                             <td>{member.id}</td>
                             <td>{member.name}</td>
                             <td>{member.email}</td>
-                            <td>{member.role}</td>
+                            <td>{member.roleLabel}</td>
                             <td className="actions-column">
                                 <div className="member-actions">
                                     <MemberRoleChangeControl
@@ -322,14 +327,14 @@ function ImpactItem({ label, tone }: ImpactItemProps) {
     );
 }
 
-function countArchivedProjects(projects: readonly { readonly status: string }[]): number {
-    return projects.filter((project) => project.status === 'Archived').length;
+function countArchivedProjects(projects: readonly DemoProject[]): number {
+    return projects.filter((project) => project.status === 'archived').length;
 }
 
-function countElevatedMembers(members: readonly { readonly role: string }[]): number {
-    return members.filter((member) => member.role === 'Owner' || member.role === 'Admin').length;
+function countElevatedMembers(members: readonly DemoMember[]): number {
+    return members.filter((member) => member.role === 'owner' || member.role === 'admin').length;
 }
 
-function countArchivedDocuments(documents: readonly { readonly state: string }[]): number {
-    return documents.filter((document) => document.state === 'Archived').length;
+function countArchivedDocuments(documents: readonly DemoDocument[]): number {
+    return documents.filter((document) => document.state === 'archived').length;
 }

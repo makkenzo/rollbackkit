@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { RollbackKitError } from '@rollbackkit/core';
 import { getLatestDemoActionConflict } from './conflict-summary';
 import {
     type DemoActionResponse,
@@ -16,9 +17,26 @@ export async function undoDemoActionRun(
 ): Promise<DemoActionResponse<DemoActionRunDto>> {
     return withDemoRollbackKit(async ({ rollbackkit }) => {
         try {
+            const existingRun = await rollbackkit.getActionRun(actionRunId);
+
+            if (existingRun !== null && existingRun.tenantId !== context.tenantId) {
+                throw new RollbackKitError({
+                    code: 'ACTION_PERMISSION_DENIED',
+                    message: `Action run "${actionRunId}" does not belong to the current demo tenant.`,
+                    details: {
+                        actionRunId,
+                        tenantId: context.tenantId,
+                        ...(existingRun.tenantId === undefined
+                            ? {}
+                            : { actionRunTenantId: existingRun.tenantId }),
+                    },
+                });
+            }
+
             const run = await rollbackkit.undo({
                 actionRunId,
                 actor: context.actor,
+                tenantId: context.tenantId,
             });
 
             return {
