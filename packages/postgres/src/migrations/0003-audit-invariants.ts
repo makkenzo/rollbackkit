@@ -10,6 +10,7 @@ BEGIN
         SELECT 1
         FROM pg_constraint
         WHERE conname = 'rollbackkit_action_runs_status_check'
+            AND conrelid = 'rollbackkit_action_runs'::regclass
     ) THEN
         ALTER TABLE rollbackkit_action_runs
             ADD CONSTRAINT rollbackkit_action_runs_status_check
@@ -32,6 +33,7 @@ BEGIN
         SELECT 1
         FROM pg_constraint
         WHERE conname = 'rollbackkit_action_runs_actor_consistency_check'
+            AND conrelid = 'rollbackkit_action_runs'::regclass
     ) THEN
         ALTER TABLE rollbackkit_action_runs
             ADD CONSTRAINT rollbackkit_action_runs_actor_consistency_check
@@ -46,6 +48,7 @@ BEGIN
         SELECT 1
         FROM pg_constraint
         WHERE conname = 'rollbackkit_action_runs_target_consistency_check'
+            AND conrelid = 'rollbackkit_action_runs'::regclass
     ) THEN
         ALTER TABLE rollbackkit_action_runs
             ADD CONSTRAINT rollbackkit_action_runs_target_consistency_check
@@ -70,6 +73,7 @@ BEGIN
         SELECT 1
         FROM pg_constraint
         WHERE conname = 'rollbackkit_side_effects_status_check'
+            AND conrelid = 'rollbackkit_side_effects'::regclass
     ) THEN
         ALTER TABLE rollbackkit_side_effects
             ADD CONSTRAINT rollbackkit_side_effects_status_check
