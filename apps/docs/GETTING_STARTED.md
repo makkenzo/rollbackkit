@@ -122,6 +122,7 @@ const preview = await rollbackkit.preview({
         id: 'user_1',
         type: 'user',
     },
+    tenantId: 'workspace_1',
     input: {
         projectId: 'project_1',
     },
@@ -140,6 +141,7 @@ const run = await rollbackkit.execute({
         id: 'user_1',
         type: 'user',
     },
+    tenantId: 'workspace_1',
     input: {
         projectId: 'project_1',
     },

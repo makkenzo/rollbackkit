@@ -101,9 +101,38 @@ internal even when it is exported from a source module for local tests.
 
 ### `@rollbackkit/core`
 
-The core root exports lifecycle contracts, action definition helpers, runtime orchestration,
-storage adapter contracts, the in-memory adapter, JSON/time primitives, identity types and
-RollbackKit errors.
+The core root exports these runtime values:
+
+- `rollbackkitVersion`;
+- `ActionRegistry`, `createActionRegistry` and `defineAction`;
+- `RollbackKitError` and `isRollbackKitError`;
+- `REVERSIBILITY` and `isUndoable`;
+- `createRollbackKit` and `RollbackKit`;
+- `isJsonValue` and `systemClock`;
+- `createMemoryStorageAdapter` and `MemoryStorageAdapter`.
+
+The core root exports these TypeScript contracts:
+
+- action definition and context types: `ActionDefinition`, `AuthorizationContext`,
+  `BaseActionContext`, `ExecuteActionContext`, `InputValidator`, `MaybePromise`,
+  `PermissionDecision`, `PreviewActionContext`, `RegisteredActionDefinition` and
+  `UndoActionContext`;
+- error types: `RollbackKitErrorCode`, `RollbackKitErrorOptions` and
+  `SerializedRollbackKitError`;
+- identity types: `ActionActor`, `ActionTarget`, `ActorType` and `TargetType`;
+- lifecycle types: `ActionPhase`, `ActionRun`, `ActionRunStatus`, `ExecuteResult`,
+  `PreviewImpactItem`, `PreviewResult`, `PreviewSeverity`, `PreviewSideEffect`,
+  `Reversibility`, `ReversibilityKind` and `UndoResult`;
+- request/runtime types: `ExecuteActionRequest`, `PreviewActionRequest`,
+  `RollbackKitOptions` and `UndoActionRequest`;
+- JSON/time primitive types: `Clock`, `DurationMs`, `JsonArray`, `JsonObject`,
+  `JsonPrimitive` and `JsonValue`;
+- storage and snapshot types: `ActionConflict`, `ActionHistoryQuery`, `ActionSideEffect`,
+  `ClaimActionRunInput`, `ClaimActionRunResult`, `ConflictRecorder`, `CreateActionRunInput`,
+  `CreateSnapshotInput`, `MemoryStorageAdapterOptions`, `RecordBoundSideEffectInput`,
+  `RecordConflictInput`, `RecordSideEffectInput`, `SideEffectRecorder`, `SideEffectStatus`,
+  `Snapshot`, `SnapshotReader`, `SnapshotRecorder`, `StorageAdapter` and
+  `UpdateActionRunInput`.
 
 ### `@rollbackkit/postgres`
 

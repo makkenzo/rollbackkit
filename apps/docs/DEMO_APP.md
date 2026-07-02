@@ -4,6 +4,8 @@ RollbackKit includes a Next.js demo application in `apps/demo-next`.
 
 The demo is a small SaaS-style workspace that shows how dangerous product actions can be made previewable, auditable and reversible.
 
+The app is a fixture demo. It is not a production auth or request-boundary template. Runtime requests use seeded demo data with a hard-coded workspace `workspace_acme`, tenant `workspace_acme` and actor `member_ada` (`Ada Lovelace`). A real product must resolve tenant, workspace, actor and permissions from its authenticated request boundary before invoking RollbackKit actions.
+
 ## Product scenario
 
 The demo workspace contains:
@@ -95,6 +97,8 @@ cp apps/demo-next/.env.example apps/demo-next/.env
 ```
 
 Then edit `apps/demo-next/.env` with your local `ROLLBACKKIT_DEMO_DATABASE_URL`.
+
+The demo runtime and database scripts require `ROLLBACKKIT_DEMO_DATABASE_URL` and intentionally do not fall back to a generic `DATABASE_URL`. Use a disposable local database because `db:migrate`, `db:seed` and `db:reset` can change demo data.
 
 Prepare the demo database:
 

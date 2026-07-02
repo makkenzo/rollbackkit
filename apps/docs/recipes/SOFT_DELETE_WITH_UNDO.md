@@ -182,6 +182,7 @@ const run = await rollbackkit.execute({
 await rollbackkit.undo({
     actionRunId: run.id,
     actor,
+    tenantId: workspaceId,
 });
 ```
 

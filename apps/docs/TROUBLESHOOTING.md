@@ -31,7 +31,7 @@ pnpm --filter @rollbackkit/demo-next db:reset
 Error:
 
 ```text
-Missing PostgreSQL database URL. Pass --database-url or set ROLLBACKKIT_DATABASE_URL / DATABASE_URL.
+Missing PostgreSQL database URL. Pass --database-url or set ROLLBACKKIT_DATABASE_URL.
 ```
 
 Fix:
@@ -46,14 +46,16 @@ Or pass the URL directly:
 pnpm exec rollbackkit doctor --database-url "postgres://user:password@localhost:5432/app_database"
 ```
 
-Use `ROLLBACKKIT_DATABASE_URL` for RollbackKit CLI and application storage.
+Use `ROLLBACKKIT_DATABASE_URL` or `--database-url` for RollbackKit CLI commands. The CLI
+intentionally ignores generic `DATABASE_URL` so schema commands do not target an ambient
+application database by accident.
 
 ## Missing Demo Database URL
 
 Error:
 
 ```text
-Missing demo database URL. Set ROLLBACKKIT_DEMO_DATABASE_URL or DATABASE_URL.
+Missing demo database URL. Set ROLLBACKKIT_DEMO_DATABASE_URL.
 ```
 
 Fix for one command:

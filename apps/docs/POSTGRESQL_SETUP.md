@@ -30,14 +30,14 @@ Replace it with your own database URL.
 
 ## Environment variables
 
-RollbackKit CLI reads the database URL from one of these environment variables:
+RollbackKit CLI reads the database URL from this environment variable:
 
 ```bash
 ROLLBACKKIT_DATABASE_URL
-DATABASE_URL
 ```
 
-`ROLLBACKKIT_DATABASE_URL` is preferred when you want a dedicated RollbackKit database URL.
+The CLI intentionally ignores generic `DATABASE_URL`. Use `ROLLBACKKIT_DATABASE_URL` or
+`--database-url` so migration commands do not target an ambient application database by accident.
 
 Example:
 
@@ -77,16 +77,17 @@ pnpm --filter @rollbackkit/cli exec node dist/bin.mjs migrate
 If migrations are pending, the CLI prints the applied migration list:
 
 ```text
-Applied 3 RollbackKit PostgreSQL migration(s):
+Applied 4 RollbackKit PostgreSQL migration(s):
 - 0001_initial_schema: Create RollbackKit action run, snapshot, side effect and conflict tables.
 - 0002_action_run_idempotency: Add scoped idempotency keys for RollbackKit action runs.
 - 0003_audit_invariants: Add audit table constraints for action run identity, status and target columns.
+- 0004_validate_audit_invariants: Validate audit table constraints added by the audit invariants migration.
 ```
 
 If the schema is already up to date, it prints:
 
 ```text
-RollbackKit PostgreSQL schema is up to date. 3 migration(s) already applied.
+RollbackKit PostgreSQL schema is up to date. 4 migration(s) already applied.
 ```
 
 ## Checking database status
@@ -117,10 +118,11 @@ RollbackKit PostgreSQL doctor
 Database: connected
 Migration table: missing
 Applied migrations: 0
-Schema: 3 pending migration(s)
+Schema: 4 pending migration(s)
 - 0001_initial_schema: Create RollbackKit action run, snapshot, side effect and conflict tables.
 - 0002_action_run_idempotency: Add scoped idempotency keys for RollbackKit action runs.
 - 0003_audit_invariants: Add audit table constraints for action run identity, status and target columns.
+- 0004_validate_audit_invariants: Validate audit table constraints added by the audit invariants migration.
 ```
 
 Example output after migrations:
@@ -129,7 +131,7 @@ Example output after migrations:
 RollbackKit PostgreSQL doctor
 Database: connected
 Migration table: present
-Applied migrations: 3
+Applied migrations: 4
 Schema: up to date
 ```
 
@@ -218,16 +220,22 @@ try {
 }
 ```
 
-## Tables created by the initial migration
+## Tables created by the migration runner
 
-The initial migration creates these tables:
+The migration runner creates and maintains its own bookkeeping table before applying package
+migrations:
+
+```text
+rollbackkit_schema_migrations
+```
+
+The initial schema migration creates the RollbackKit lifecycle tables:
 
 ```text
 rollbackkit_action_runs
 rollbackkit_snapshots
 rollbackkit_side_effects
 rollbackkit_conflicts
-rollbackkit_schema_migrations
 ```
 
 ## What is stored
@@ -348,7 +356,7 @@ setup, migration checksum errors, idempotency conflicts and undo refusal, see
 Error:
 
 ```text
-Missing PostgreSQL database URL. Pass --database-url or set ROLLBACKKIT_DATABASE_URL / DATABASE_URL.
+Missing PostgreSQL database URL. Pass --database-url or set ROLLBACKKIT_DATABASE_URL.
 ```
 
 Fix:
