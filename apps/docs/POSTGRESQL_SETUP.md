@@ -114,6 +114,7 @@ Example output before migrations:
 ```text
 RollbackKit PostgreSQL doctor
 Database: connected
+Migration table: missing
 Applied migrations: 0
 Schema: 2 pending migration(s)
 - 0001_initial_schema: Create RollbackKit action run, snapshot, side effect and conflict tables.
@@ -125,6 +126,7 @@ Example output after migrations:
 ```text
 RollbackKit PostgreSQL doctor
 Database: connected
+Migration table: present
 Applied migrations: 2
 Schema: up to date
 ```

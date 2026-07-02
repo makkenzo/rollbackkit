@@ -92,13 +92,15 @@ Before undoing, verify that:
 - the action completed successfully;
 - the undo window is still open;
 - the action has not already been undone;
+- the requested `tenantId` matches the action run tenant;
 - the undo actor is authorized;
 - required snapshots exist;
 - the current target state still matches the expected state;
 - irreversible side effects are not being silently reversed.
 
-When a conflict is detected, record the reason and stop. Do not partially restore state after a
-failed conflict check.
+When a conflict is detected, record the reason and stop. RollbackKit refuses undo after conflict
+records are created, even if the conflict check does not throw. Do not partially restore state after
+a failed conflict check.
 
 ## Lightweight Threat Model
 

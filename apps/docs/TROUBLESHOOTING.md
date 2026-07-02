@@ -210,14 +210,16 @@ Error:
 Idempotency key "request_123" was already used for action "project.archive" with different input.
 ```
 
+The same error code is returned when the key is reused with a different target.
+
 Fix:
 
 - reuse the same idempotency key only for exact retries of the same request;
 - generate a new key for a different target or input;
 - include the action scope in application-generated request ids.
 
-RollbackKit treats same key plus different input as unsafe because it cannot know which mutation the
-caller intended to retry.
+RollbackKit treats same key plus different input or target as unsafe because it cannot know which
+mutation the caller intended to retry.
 
 ## Undo Is Refused
 
@@ -227,9 +229,10 @@ Undo is designed to fail closed. Common causes:
 - the action did not complete successfully;
 - the undo window expired;
 - the action has already been undone;
+- the request `tenantId` does not match the action run tenant;
 - the undo actor is not authorized;
 - required snapshots are missing;
-- `checkConflicts` found that current state no longer matches expected state.
+- `checkConflicts` recorded that current state no longer matches expected state.
 
 Check conflicts for the action run when status is `undo_failed`:
 

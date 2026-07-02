@@ -3,8 +3,9 @@
 Use this recipe when undo is only safe if the current product state still matches the state that the
 original action expects.
 
-The action should check current state before undo, record a conflict with UI-safe details, and throw
-`ACTION_CONFLICT` before any restore mutation happens.
+The action should check current state before undo and record a conflict with UI-safe details before
+any restore mutation happens. Once `checkConflicts` records a conflict, RollbackKit refuses undo with
+`ACTION_CONFLICT`; throw your own `ACTION_CONFLICT` only when you need a custom message or details.
 
 ## What Problem It Solves
 
@@ -86,15 +87,6 @@ export const memberChangeRoleAction = defineAction({
             actualState: `Member role is ${currentMember.role}`,
             suggestedNextStep: 'Review the current member role before retrying undo.',
         });
-
-        throw new RollbackKitError({
-            code: 'ACTION_CONFLICT',
-            message: `Member "${currentMember.id}" role cannot be changed safely: ${reason}`,
-            details: {
-                memberId: currentMember.id,
-                reason,
-            },
-        });
     },
 
     async undo({ snapshots }) {
@@ -141,7 +133,8 @@ The demo app shows this as an `Undo blocked` history item with:
 
 - Do not perform restore mutations before `checkConflicts` finishes.
 - Do not record raw snapshots or secrets in conflict details.
-- Do not throw a generic error for expected unsafe undo; use `ACTION_CONFLICT`.
+- Do not throw a generic error for expected unsafe undo; record a conflict, or throw
+  `ACTION_CONFLICT` when you need a custom error payload.
 - Do not hide conflicts in logs only; return a UI/API-safe summary.
 - Do not treat missing targets as ordinary not-found errors during undo. Missing targets are unsafe
   undo conflicts.

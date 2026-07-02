@@ -160,11 +160,12 @@ const undone = await rollbackkit.undo({
         id: 'user_1',
         type: 'user',
     },
+    tenantId: 'workspace_1',
 });
 ```
 
-Expected result: RollbackKit checks the action run, undo window and current status, reads the saved
-snapshot, calls the action undo handler and marks the action run as undone.
+Expected result: RollbackKit checks the action run, requested tenant, undo window and current
+status, reads the saved snapshot, calls the action undo handler and marks the action run as undone.
 
 ## 6. Add PostgreSQL Persistence
 
@@ -208,7 +209,7 @@ workspace build, migration checksum, idempotency and undo errors.
 - Do not store secrets or unnecessary sensitive data in snapshots.
 - Do not pass a bare `pg.Pool` directly to `createPostgresStore` for undo flows; use a single
   `pg.Client` or `pg.PoolClient`.
-- Do not reuse an idempotency key with different input.
+- Do not reuse an idempotency key with different input or a different target.
 
 ## Related Pages
 

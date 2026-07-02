@@ -50,8 +50,9 @@ Execute should:
 - mark the action as completed or failed.
 
 Execute is idempotent when an idempotency key is provided. A retry with the same
-action, actor, tenant, key and input returns the existing action run. Reusing the
-same key with different input is rejected as an idempotency conflict.
+action, actor, tenant, key, input and target returns the existing action run.
+Reusing the same key with different input or a different target is rejected as an
+idempotency conflict.
 
 ### 3. Audit
 
@@ -88,8 +89,9 @@ Undo should:
 - check that the action completed successfully;
 - check that undo has not expired;
 - check that the action has not already been undone;
+- check that the requested tenant matches the action run tenant when `tenantId` is provided;
 - check permissions for the undo actor;
-- check conflicts;
+- check conflicts and stop if any conflict is recorded;
 - read required snapshots;
 - execute the undo handler;
 - record undo status and timestamps.

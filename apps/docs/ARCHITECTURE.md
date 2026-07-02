@@ -168,18 +168,19 @@ user request
 
 Execute is idempotent when an idempotency key is provided. The idempotency scope
 is action name, actor type/id, tenant and key; reusing the same key with
-different input is rejected.
+different input or a different target is rejected.
 
 ### Undo flow
 
 ```text
 undo request
   -> load action run
+  -> check request tenant against action run tenant when provided
   -> check permission
   -> acquire lock
   -> check status
   -> check undo window
-  -> check conflicts
+  -> check conflicts and stop if any conflict is recorded
   -> load snapshots
   -> execute undo handler
   -> mark undone
