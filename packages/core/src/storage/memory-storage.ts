@@ -1,6 +1,8 @@
+import type { SerializedRollbackKitError } from '../errors/rollbackkit-error';
 import { RollbackKitError } from '../errors/rollbackkit-error';
 import type { ActionRun } from '../lifecycle/lifecycle';
-import type { JsonValue } from '../shared/json';
+import type { Reversibility } from '../lifecycle/reversibility';
+import type { JsonObject, JsonValue } from '../shared/json';
 import type { Clock } from '../shared/time';
 import { systemClock } from '../shared/time';
 import type { CreateSnapshotInput, Snapshot } from './snapshot';
@@ -50,21 +52,23 @@ export class MemoryStorageAdapter implements StorageAdapter {
             id: this.#createId('run'),
             name: input.name,
             status: 'created',
-            actor: input.actor,
-            input: input.input,
-            reversibility: input.reversibility,
+            actor: cloneActor(input.actor),
+            input: cloneJsonValue(input.input),
+            reversibility: cloneReversibility(input.reversibility),
             createdAt: this.#clock.now(),
             ...(input.tenantId === undefined ? {} : { tenantId: input.tenantId }),
-            ...(input.target === undefined ? {} : { target: input.target }),
+            ...(input.target === undefined ? {} : { target: cloneTarget(input.target) }),
             ...(input.inputHash === undefined ? {} : { inputHash: input.inputHash }),
             ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
-            ...(input.undoExpiresAt === undefined ? {} : { undoExpiresAt: input.undoExpiresAt }),
-            ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+            ...(input.undoExpiresAt === undefined
+                ? {}
+                : { undoExpiresAt: cloneDate(input.undoExpiresAt) }),
+            ...(input.metadata === undefined ? {} : { metadata: cloneJsonObject(input.metadata) }),
         };
 
         this.#actionRuns.set(run.id, run as ActionRun);
 
-        return run;
+        return cloneActionRun(run);
     }
 
     async claimActionRun<TInput extends JsonValue = JsonValue>(
@@ -74,7 +78,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
 
         if (existing !== null) {
             return {
-                run: existing as ActionRun<TInput>,
+                run: cloneActionRun(existing) as ActionRun<TInput>,
                 created: false,
             };
         }
@@ -86,7 +90,9 @@ export class MemoryStorageAdapter implements StorageAdapter {
     }
 
     async getActionRun(id: string): Promise<ActionRun | null> {
-        return this.#actionRuns.get(id) ?? null;
+        const run = this.#actionRuns.get(id);
+
+        return run === undefined ? null : cloneActionRun(run);
     }
 
     async updateActionRun<TResult extends JsonValue = JsonValue>(
@@ -98,19 +104,23 @@ export class MemoryStorageAdapter implements StorageAdapter {
         const updated = {
             ...existing,
             ...(input.status === undefined ? {} : { status: input.status }),
-            ...(input.executedAt === undefined ? {} : { executedAt: input.executedAt }),
-            ...(input.undoStartedAt === undefined ? {} : { undoStartedAt: input.undoStartedAt }),
-            ...(input.undoneAt === undefined ? {} : { undoneAt: input.undoneAt }),
-            ...(input.undoneBy === undefined ? {} : { undoneBy: input.undoneBy }),
-            ...(input.result === undefined ? {} : { result: input.result }),
-            ...(input.undoResult === undefined ? {} : { undoResult: input.undoResult }),
-            ...(input.error === undefined ? {} : { error: input.error }),
-            ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+            ...(input.executedAt === undefined ? {} : { executedAt: cloneDate(input.executedAt) }),
+            ...(input.undoStartedAt === undefined
+                ? {}
+                : { undoStartedAt: cloneDate(input.undoStartedAt) }),
+            ...(input.undoneAt === undefined ? {} : { undoneAt: cloneDate(input.undoneAt) }),
+            ...(input.undoneBy === undefined ? {} : { undoneBy: cloneActor(input.undoneBy) }),
+            ...(input.result === undefined ? {} : { result: cloneJsonValue(input.result) }),
+            ...(input.undoResult === undefined
+                ? {}
+                : { undoResult: cloneJsonValue(input.undoResult) }),
+            ...(input.error === undefined ? {} : { error: cloneSerializedError(input.error) }),
+            ...(input.metadata === undefined ? {} : { metadata: cloneJsonObject(input.metadata) }),
         } as ActionRun<JsonValue, TResult>;
 
         this.#actionRuns.set(id, updated as ActionRun);
 
-        return updated;
+        return cloneActionRun(updated);
     }
 
     async saveSnapshot<TValue extends JsonValue = JsonValue>(
@@ -122,9 +132,9 @@ export class MemoryStorageAdapter implements StorageAdapter {
             id: this.#createId('snapshot'),
             actionRunId: input.actionRunId,
             key: input.key,
-            value: input.value,
+            value: cloneJsonValue(input.value),
             createdAt: this.#clock.now(),
-            ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+            ...(input.metadata === undefined ? {} : { metadata: cloneJsonObject(input.metadata) }),
         };
 
         const snapshots = this.#snapshotsByActionRunId.get(input.actionRunId) ?? [];
@@ -132,11 +142,11 @@ export class MemoryStorageAdapter implements StorageAdapter {
 
         this.#snapshotsByActionRunId.set(input.actionRunId, snapshots);
 
-        return snapshot;
+        return cloneSnapshot(snapshot);
     }
 
     async getSnapshots(actionRunId: string): Promise<readonly Snapshot[]> {
-        return [...(this.#snapshotsByActionRunId.get(actionRunId) ?? [])];
+        return (this.#snapshotsByActionRunId.get(actionRunId) ?? []).map(cloneSnapshot);
     }
 
     async recordSideEffect<TPayload extends JsonValue = JsonValue>(
@@ -149,10 +159,10 @@ export class MemoryStorageAdapter implements StorageAdapter {
             actionRunId: input.actionRunId,
             type: input.type,
             status: input.status,
-            reversibility: input.reversibility,
+            reversibility: cloneReversibility(input.reversibility),
             createdAt: this.#clock.now(),
-            ...(input.payload === undefined ? {} : { payload: input.payload }),
-            ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+            ...(input.payload === undefined ? {} : { payload: cloneJsonValue(input.payload) }),
+            ...(input.metadata === undefined ? {} : { metadata: cloneJsonObject(input.metadata) }),
         };
 
         const sideEffects = this.#sideEffectsByActionRunId.get(input.actionRunId) ?? [];
@@ -160,11 +170,11 @@ export class MemoryStorageAdapter implements StorageAdapter {
 
         this.#sideEffectsByActionRunId.set(input.actionRunId, sideEffects);
 
-        return sideEffect;
+        return cloneSideEffect(sideEffect);
     }
 
     async getSideEffects(actionRunId: string): Promise<readonly ActionSideEffect[]> {
-        return [...(this.#sideEffectsByActionRunId.get(actionRunId) ?? [])];
+        return (this.#sideEffectsByActionRunId.get(actionRunId) ?? []).map(cloneSideEffect);
     }
 
     async recordConflict(input: RecordConflictInput): Promise<ActionConflict> {
@@ -175,7 +185,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
             actionRunId: input.actionRunId,
             reason: input.reason,
             createdAt: this.#clock.now(),
-            ...(input.details === undefined ? {} : { details: input.details }),
+            ...(input.details === undefined ? {} : { details: cloneJsonObject(input.details) }),
         };
 
         const conflicts = this.#conflictsByActionRunId.get(input.actionRunId) ?? [];
@@ -183,11 +193,11 @@ export class MemoryStorageAdapter implements StorageAdapter {
 
         this.#conflictsByActionRunId.set(input.actionRunId, conflicts);
 
-        return conflict;
+        return cloneConflict(conflict);
     }
 
     async getConflicts(actionRunId: string): Promise<readonly ActionConflict[]> {
-        return [...(this.#conflictsByActionRunId.get(actionRunId) ?? [])];
+        return (this.#conflictsByActionRunId.get(actionRunId) ?? []).map(cloneConflict);
     }
 
     async queryActionRuns(query: ActionHistoryQuery): Promise<readonly ActionRun[]> {
@@ -241,7 +251,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
             runs = runs.slice(0, Math.max(0, query.limit));
         }
 
-        return runs;
+        return runs.map(cloneActionRun);
     }
 
     async withActionRunLock<TValue>(
@@ -263,7 +273,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
         await previous.catch(() => undefined);
 
         try {
-            return await handler(this.#requireActionRun(actionRunId));
+            return await handler(cloneActionRun(this.#requireActionRun(actionRunId)));
         } finally {
             release();
 
@@ -317,4 +327,114 @@ export function createMemoryStorageAdapter(
     options?: MemoryStorageAdapterOptions,
 ): MemoryStorageAdapter {
     return new MemoryStorageAdapter(options);
+}
+
+function cloneActionRun<
+    TInput extends JsonValue = JsonValue,
+    TResult extends JsonValue = JsonValue,
+>(run: ActionRun<TInput, TResult>): ActionRun<TInput, TResult> {
+    return {
+        ...run,
+        actor: cloneActor(run.actor),
+        input: cloneJsonValue(run.input),
+        reversibility: cloneReversibility(run.reversibility),
+        createdAt: cloneDate(run.createdAt),
+        ...(run.tenantId === undefined ? {} : { tenantId: run.tenantId }),
+        ...(run.target === undefined ? {} : { target: cloneTarget(run.target) }),
+        ...(run.inputHash === undefined ? {} : { inputHash: run.inputHash }),
+        ...(run.idempotencyKey === undefined ? {} : { idempotencyKey: run.idempotencyKey }),
+        ...(run.executedAt === undefined ? {} : { executedAt: cloneDate(run.executedAt) }),
+        ...(run.undoExpiresAt === undefined ? {} : { undoExpiresAt: cloneDate(run.undoExpiresAt) }),
+        ...(run.undoStartedAt === undefined ? {} : { undoStartedAt: cloneDate(run.undoStartedAt) }),
+        ...(run.undoneAt === undefined ? {} : { undoneAt: cloneDate(run.undoneAt) }),
+        ...(run.undoneBy === undefined ? {} : { undoneBy: cloneActor(run.undoneBy) }),
+        ...(run.result === undefined ? {} : { result: cloneJsonValue(run.result) }),
+        ...(run.undoResult === undefined ? {} : { undoResult: cloneJsonValue(run.undoResult) }),
+        ...(run.error === undefined ? {} : { error: cloneSerializedError(run.error) }),
+        ...(run.metadata === undefined ? {} : { metadata: cloneJsonObject(run.metadata) }),
+    };
+}
+
+function cloneSnapshot<TValue extends JsonValue = JsonValue>(
+    snapshot: Snapshot<TValue>,
+): Snapshot<TValue> {
+    return {
+        ...snapshot,
+        value: cloneJsonValue(snapshot.value),
+        createdAt: cloneDate(snapshot.createdAt),
+        ...(snapshot.metadata === undefined
+            ? {}
+            : { metadata: cloneJsonObject(snapshot.metadata) }),
+    };
+}
+
+function cloneSideEffect<TPayload extends JsonValue = JsonValue>(
+    sideEffect: ActionSideEffect<TPayload>,
+): ActionSideEffect<TPayload> {
+    return {
+        ...sideEffect,
+        reversibility: cloneReversibility(sideEffect.reversibility),
+        createdAt: cloneDate(sideEffect.createdAt),
+        ...(sideEffect.payload === undefined
+            ? {}
+            : { payload: cloneJsonValue(sideEffect.payload) }),
+        ...(sideEffect.metadata === undefined
+            ? {}
+            : { metadata: cloneJsonObject(sideEffect.metadata) }),
+    };
+}
+
+function cloneConflict(conflict: ActionConflict): ActionConflict {
+    return {
+        ...conflict,
+        createdAt: cloneDate(conflict.createdAt),
+        ...(conflict.details === undefined ? {} : { details: cloneJsonObject(conflict.details) }),
+    };
+}
+
+function cloneActor<TActor extends { readonly metadata?: JsonObject }>(actor: TActor): TActor {
+    return {
+        ...actor,
+        ...(actor.metadata === undefined ? {} : { metadata: cloneJsonObject(actor.metadata) }),
+    };
+}
+
+function cloneTarget<TTarget extends { readonly metadata?: JsonObject }>(target: TTarget): TTarget {
+    return {
+        ...target,
+        ...(target.metadata === undefined ? {} : { metadata: cloneJsonObject(target.metadata) }),
+    };
+}
+
+function cloneReversibility<TValue extends Reversibility>(reversibility: TValue): TValue {
+    return {
+        ...reversibility,
+        ...(reversibility.metadata === undefined
+            ? {}
+            : { metadata: cloneJsonObject(reversibility.metadata) }),
+    };
+}
+
+function cloneSerializedError(error: SerializedRollbackKitError): SerializedRollbackKitError {
+    return {
+        code: error.code,
+        message: error.message,
+        ...(error.details === undefined ? {} : { details: cloneJsonObject(error.details) }),
+    };
+}
+
+function cloneJsonObject<TValue extends JsonObject>(value: TValue): TValue {
+    return cloneJsonValue(value) as TValue;
+}
+
+function cloneJsonValue<TValue extends JsonValue>(value: TValue): TValue {
+    if (value === null || typeof value !== 'object') {
+        return value;
+    }
+
+    return JSON.parse(JSON.stringify(value)) as TValue;
+}
+
+function cloneDate(value: Date): Date {
+    return new Date(value.getTime());
 }

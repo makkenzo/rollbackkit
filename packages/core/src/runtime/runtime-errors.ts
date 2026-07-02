@@ -54,17 +54,24 @@ export function assertActionRunCanBeUndone(run: ActionRun, now: Date): void {
 }
 
 export function assertUndoTenantMatches(run: ActionRun, tenantId: string | undefined): void {
-    if (tenantId === undefined || run.tenantId === tenantId) {
+    if (run.tenantId === undefined && tenantId === undefined) {
+        return;
+    }
+
+    if (run.tenantId !== undefined && run.tenantId === tenantId) {
         return;
     }
 
     throw new RollbackKitError({
         code: 'ACTION_PERMISSION_DENIED',
-        message: `Action run "${run.id}" does not belong to tenant "${tenantId}".`,
+        message:
+            tenantId === undefined
+                ? `Action run "${run.id}" belongs to a tenant and requires tenant context.`
+                : `Action run "${run.id}" does not belong to tenant "${tenantId}".`,
         details: {
             actionRunId: run.id,
             actionName: run.name,
-            tenantId,
+            ...(tenantId === undefined ? {} : { tenantId }),
             ...(run.tenantId === undefined ? {} : { actionRunTenantId: run.tenantId }),
         },
     });

@@ -206,6 +206,53 @@ describe('RollbackKit undo lifecycle', () => {
         });
     });
 
+    it('rejects tenant-scoped undo when the request omits tenant context', async () => {
+        let undoCalled = false;
+
+        const kit = createRollbackKit({
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => ({}),
+                    undo: async () => {
+                        undoCalled = true;
+
+                        return {};
+                    },
+                }),
+            ],
+        });
+
+        const run = await kit.execute({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            input: {
+                projectId: 'project_1',
+            },
+        });
+
+        await expect(
+            kit.undo({
+                actionRunId: run.id,
+                actor: undoActor,
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_PERMISSION_DENIED',
+        });
+
+        expect(undoCalled).toBe(false);
+        await expect(kit.getActionRun(run.id)).resolves.toMatchObject({
+            status: 'completed',
+        });
+    });
+
     it('rejects undo for irreversible actions', async () => {
         const kit = createRollbackKit({
             actions: [

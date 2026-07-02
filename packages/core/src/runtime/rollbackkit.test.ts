@@ -265,6 +265,48 @@ describe('RollbackKit preview lifecycle', () => {
         });
     });
 
+    it('checks preview permission against the resolved target', async () => {
+        const seenTargets: string[] = [];
+        const kit = createRollbackKit({
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    resolveTarget: async () => ({
+                        id: 'project_1',
+                        type: 'project',
+                        label: 'Demo project',
+                    }),
+                    authorize: async (context) => {
+                        seenTargets.push(context.target?.id ?? 'missing');
+
+                        return context.target?.id === 'project_1';
+                    },
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => ({}),
+                }),
+            ],
+        });
+
+        await expect(
+            kit.preview({
+                name: 'project.archive',
+                actor,
+                input: {
+                    projectId: 'project_1',
+                },
+            }),
+        ).resolves.toMatchObject({
+            title: 'Archive project',
+        });
+
+        expect(seenTargets).toEqual(['project_1']);
+    });
+
     it('accepts typed action definitions in constructor options', async () => {
         interface ProjectArchiveInput extends JsonObject {
             readonly projectId: string;

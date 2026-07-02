@@ -38,6 +38,70 @@ describe('MemoryStorageAdapter', () => {
         await expect(storage.getActionRun(run.id)).resolves.toEqual(run);
     });
 
+    it('returns defensive copies of stored action runs and snapshots', async () => {
+        const storage = createMemoryStorageAdapter();
+        const input = {
+            projectId: 'project_1',
+            metadata: {
+                reason: 'cleanup',
+            },
+        };
+
+        const run = await storage.createActionRun({
+            name: 'project.archive',
+            actor,
+            input,
+            reversibility: REVERSIBILITY.full,
+        });
+
+        input.metadata.reason = 'mutated after create';
+
+        const firstRead = await storage.getActionRun(run.id);
+
+        expect(firstRead?.input).toEqual({
+            projectId: 'project_1',
+            metadata: {
+                reason: 'cleanup',
+            },
+        });
+
+        if (firstRead === null) {
+            throw new Error('Expected action run to exist.');
+        }
+
+        (firstRead.input as { metadata: { reason: string } }).metadata.reason = 'mutated read';
+
+        await expect(storage.getActionRun(run.id)).resolves.toMatchObject({
+            input: {
+                projectId: 'project_1',
+                metadata: {
+                    reason: 'cleanup',
+                },
+            },
+        });
+
+        const snapshotValue = {
+            status: 'active',
+        };
+        const snapshot = await storage.saveSnapshot({
+            actionRunId: run.id,
+            key: 'previousProjectState',
+            value: snapshotValue,
+        });
+
+        snapshotValue.status = 'archived';
+        (snapshot.value as { status: string }).status = 'mutated snapshot';
+
+        await expect(storage.getSnapshots(run.id)).resolves.toMatchObject([
+            {
+                key: 'previousProjectState',
+                value: {
+                    status: 'active',
+                },
+            },
+        ]);
+    });
+
     it('updates action runs', async () => {
         const storage = createMemoryStorageAdapter();
 

@@ -111,11 +111,6 @@ export class RollbackKit {
             ...(request.target === undefined ? {} : { target: request.target }),
         });
 
-        await authorizeAction(action, {
-            ...initialContext,
-            phase: 'preview',
-        });
-
         const target = await resolveActionTarget(action, initialContext);
 
         const baseContext = createBaseActionContext({
@@ -124,6 +119,11 @@ export class RollbackKit {
             request,
             clock: this.#clock,
             ...(target === undefined ? {} : { target }),
+        });
+
+        await authorizeAction(action, {
+            ...baseContext,
+            phase: 'preview',
         });
 
         const preview = await action.preview({
@@ -154,11 +154,6 @@ export class RollbackKit {
             ...(request.target === undefined ? {} : { target: request.target }),
         });
 
-        await authorizeAction(action, {
-            ...initialContext,
-            phase: 'execute',
-        });
-
         const target = await resolveActionTarget(action, initialContext);
 
         const baseContext = createBaseActionContext({
@@ -167,6 +162,11 @@ export class RollbackKit {
             request,
             clock: this.#clock,
             ...(target === undefined ? {} : { target }),
+        });
+
+        await authorizeAction(action, {
+            ...baseContext,
+            phase: 'execute',
         });
 
         const idempotencyKey = request.idempotencyKey;
