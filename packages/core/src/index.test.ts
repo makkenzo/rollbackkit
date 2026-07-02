@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import packageJson from '../package.json';
 
 import {
     defineAction,
@@ -10,8 +11,8 @@ import {
 } from './index';
 
 describe('@rollbackkit/core', () => {
-    it('exports package version placeholder', () => {
-        expect(rollbackkitVersion).toBe('0.0.0');
+    it('exports package version from package metadata', () => {
+        expect(rollbackkitVersion).toBe(packageJson.version);
     });
 
     it('defines action contracts', () => {

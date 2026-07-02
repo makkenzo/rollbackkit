@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { PostgresMigrationResult, PostgresMigrationStatus } from '@rollbackkit/postgres';
 import { describe, expect, it } from 'vitest';
 
@@ -29,8 +30,11 @@ const idempotencyMigration = {
 };
 
 describe('@rollbackkit/cli', () => {
-    it('exports package version placeholder', () => {
-        expect(rollbackkitCliVersion).toBe('0.0.0');
+    it('exports package version from package metadata', () => {
+        expect(rollbackkitCliVersion).toBe(readPackageVersion());
+        expect(
+            readFileSync(new URL('../../src/program.ts', import.meta.url), 'utf8'),
+        ).not.toContain("rollbackkitCliVersion = '0.0.0'");
     });
 
     it('applies PostgreSQL migrations', async () => {
@@ -184,3 +188,13 @@ describe('@rollbackkit/cli', () => {
         );
     });
 });
+
+function readPackageVersion(): string {
+    const packageJson = JSON.parse(
+        readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as {
+        readonly version: string;
+    };
+
+    return packageJson.version;
+}

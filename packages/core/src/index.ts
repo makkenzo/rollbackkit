@@ -1,4 +1,6 @@
-export const rollbackkitVersion = '0.0.0';
+import packageJson from '../package.json';
+
+export const rollbackkitVersion = packageJson.version;
 
 export type {
     ActionDefinition,

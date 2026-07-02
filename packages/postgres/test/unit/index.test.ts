@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
 import * as publicApi from '../../src/index';
@@ -11,8 +12,11 @@ import {
 import { FakePostgresExecutor } from '../helpers/fake-postgres-executor';
 
 describe('@rollbackkit/postgres', () => {
-    it('exports package version placeholder', () => {
-        expect(rollbackkitPostgresVersion).toBe('0.0.0');
+    it('exports package version from package metadata', () => {
+        expect(rollbackkitPostgresVersion).toBe(readPackageVersion());
+        expect(readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf8')).not.toContain(
+            "rollbackkitPostgresVersion = '0.0.0'",
+        );
     });
 
     it('does not expose storage internals from the package root', () => {
@@ -309,4 +313,14 @@ function createMigrationChecksum(id: string): string {
     }
 
     return `sha256:${createHash('sha256').update(migration.sql).digest('hex')}`;
+}
+
+function readPackageVersion(): string {
+    const packageJson = JSON.parse(
+        readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as {
+        readonly version: string;
+    };
+
+    return packageJson.version;
 }

@@ -6,12 +6,13 @@ import {
     type PostgresMigrationStatus,
 } from '@rollbackkit/postgres';
 import { Command } from 'commander';
+import packageJson from '../package.json';
 import { loadDatabaseConfig } from './database-url';
 import { writeCliError } from './error-presenter';
 import type { CliWriter } from './output';
 import { writeLine } from './output';
 
-export const rollbackkitCliVersion = '0.0.0';
+export const rollbackkitCliVersion = packageJson.version;
 export type { CliWriter } from './output';
 
 export interface RollbackKitCliProgramOptions {
