@@ -77,15 +77,16 @@ pnpm --filter @rollbackkit/cli exec node dist/bin.mjs migrate
 If migrations are pending, the CLI prints the applied migration list:
 
 ```text
-Applied 2 RollbackKit PostgreSQL migration(s):
+Applied 3 RollbackKit PostgreSQL migration(s):
 - 0001_initial_schema: Create RollbackKit action run, snapshot, side effect and conflict tables.
 - 0002_action_run_idempotency: Add scoped idempotency keys for RollbackKit action runs.
+- 0003_audit_invariants: Add audit table constraints for action run identity, status and target columns.
 ```
 
 If the schema is already up to date, it prints:
 
 ```text
-RollbackKit PostgreSQL schema is up to date. 2 migration(s) already applied.
+RollbackKit PostgreSQL schema is up to date. 3 migration(s) already applied.
 ```
 
 ## Checking database status
@@ -116,9 +117,10 @@ RollbackKit PostgreSQL doctor
 Database: connected
 Migration table: missing
 Applied migrations: 0
-Schema: 2 pending migration(s)
+Schema: 3 pending migration(s)
 - 0001_initial_schema: Create RollbackKit action run, snapshot, side effect and conflict tables.
 - 0002_action_run_idempotency: Add scoped idempotency keys for RollbackKit action runs.
+- 0003_audit_invariants: Add audit table constraints for action run identity, status and target columns.
 ```
 
 Example output after migrations:
@@ -127,35 +129,46 @@ Example output after migrations:
 RollbackKit PostgreSQL doctor
 Database: connected
 Migration table: present
-Applied migrations: 2
+Applied migrations: 3
 Schema: up to date
 ```
 
 ## Using `PostgresStore`
 
-Create a PostgreSQL client and pass it to `createPostgresStore`.
+Create `PostgresStore` with a single PostgreSQL connection. In web servers, lease that connection
+from a pool for the duration of the RollbackKit operation.
 
 ```ts
 import { createRollbackKit } from '@rollbackkit/core';
 import { createPostgresStore } from '@rollbackkit/postgres';
-import { Client } from 'pg';
+import { Pool } from 'pg';
 
-const client = new Client({
+const pool = new Pool({
     connectionString: process.env.ROLLBACKKIT_DATABASE_URL,
 });
 
-await client.connect();
+async function withRollbackKit<TValue>(
+    handler: (rollbackkit: ReturnType<typeof createRollbackKit>) => Promise<TValue>,
+): Promise<TValue> {
+    const client = await pool.connect();
 
-const storage = createPostgresStore({
-    executor: client,
-});
+    try {
+        const storage = createPostgresStore({
+            executor: client,
+        });
 
-const rollbackkit = createRollbackKit({
-    storage,
-    actions: [
-        // your actions
-    ],
-});
+        const rollbackkit = createRollbackKit({
+            storage,
+            actions: [
+                // your actions
+            ],
+        });
+
+        return await handler(rollbackkit);
+    } finally {
+        client.release();
+    }
+}
 ```
 
 ## Important locking note
@@ -164,12 +177,15 @@ const rollbackkit = createRollbackKit({
 
 For lock-safe undo, pass a single-connection executor such as:
 
-* `pg.Client`;
-* `pg.PoolClient`.
+* a short-lived `pg.Client`;
+* a request-scoped `pg.PoolClient`.
 
 Do not pass a bare `pg.Pool` directly to `createPostgresStore` for undo flows.
 
 A bare pool can run `BEGIN`, `SELECT ... FOR UPDATE`, updates and `COMMIT` on different connections, which breaks transaction safety.
+
+Do not share one connected `pg.Client` across concurrent HTTP requests. `PostgresStore` owns
+transactions internally, so concurrent RollbackKit calls need separate leased clients.
 
 Recommended pattern with `pg.Pool`:
 

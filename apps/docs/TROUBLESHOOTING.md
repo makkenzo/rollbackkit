@@ -202,6 +202,10 @@ try {
 Use `pg.Client` or `pg.PoolClient` for RollbackKit storage. A bare `pg.Pool` can split transaction
 queries across connections, which breaks undo locking.
 
+For web servers, prefer leasing a `pg.PoolClient` for each RollbackKit operation. Do not keep one
+connected `pg.Client` inside a singleton `RollbackKit` instance and share it across concurrent
+requests.
+
 ## Idempotency Conflict
 
 Error:
@@ -230,6 +234,7 @@ Undo is designed to fail closed. Common causes:
 - the undo window expired;
 - the action has already been undone;
 - the request `tenantId` does not match the action run tenant;
+- a tenant-scoped action run is undone without passing tenant context;
 - the undo actor is not authorized;
 - required snapshots are missing;
 - `checkConflicts` recorded that current state no longer matches expected state.

@@ -179,20 +179,30 @@ pnpm exec rollbackkit migrate
 
 ```ts
 import { createPostgresStore } from '@rollbackkit/postgres';
-import { Client } from 'pg';
+import { Pool } from 'pg';
 
-const client = new Client({
+const pool = new Pool({
     connectionString: process.env.ROLLBACKKIT_DATABASE_URL,
 });
 
-await client.connect();
+async function withRollbackKit<TValue>(
+    handler: (rollbackkit: ReturnType<typeof createRollbackKit>) => Promise<TValue>,
+): Promise<TValue> {
+    const client = await pool.connect();
 
-const rollbackkit = createRollbackKit({
-    storage: createPostgresStore({
-        executor: client,
-    }),
-    actions: [projectArchiveAction],
-});
+    try {
+        return await handler(
+            createRollbackKit({
+                storage: createPostgresStore({
+                    executor: client,
+                }),
+                actions: [projectArchiveAction],
+            }),
+        );
+    } finally {
+        client.release();
+    }
+}
 ```
 
 See [PostgreSQL Setup](./POSTGRESQL_SETUP.md) for migration commands, locking notes and table
@@ -207,8 +217,9 @@ workspace build, migration checksum, idempotency and undo errors.
 - Do not accept `actor` or `tenantId` from untrusted client payloads.
 - Do not mark an action as fully reversible unless its undo handler can actually restore state.
 - Do not store secrets or unnecessary sensitive data in snapshots.
-- Do not pass a bare `pg.Pool` directly to `createPostgresStore` for undo flows; use a single
-  `pg.Client` or `pg.PoolClient`.
+- Do not pass a bare `pg.Pool` directly to `createPostgresStore` for undo flows; use a
+  request-scoped `pg.PoolClient` or a short-lived `pg.Client`.
+- Do not share one connected `pg.Client` across concurrent server requests.
 - Do not reuse an idempotency key with different input or a different target.
 
 ## Related Pages
