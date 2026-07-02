@@ -208,6 +208,7 @@ describe('PostgresStore core lifecycle integration', () => {
         const undone = await kit.undo({
             actionRunId: run.id,
             actor: undoActor,
+            tenantId: 'tenant_1',
         });
 
         expect(archived).toBe(false);

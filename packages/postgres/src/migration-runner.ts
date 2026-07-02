@@ -18,7 +18,18 @@ ALTER TABLE rollbackkit_schema_migrations
 `;
 
 const ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_CLASS_ID = 1_763_074_182;
-const ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_OBJECT_ID = 1;
+const ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_SQL = `
+SELECT pg_advisory_lock(
+    $1,
+    hashtext(current_database() || ':' || current_schema() || ':rollbackkit_schema_migrations')
+)
+`;
+const ROLLBACKKIT_MIGRATION_ADVISORY_UNLOCK_SQL = `
+SELECT pg_advisory_unlock(
+    $1,
+    hashtext(current_database() || ':' || current_schema() || ':rollbackkit_schema_migrations')
+)
+`;
 
 interface AppliedMigrationRow extends QueryResultRow {
     readonly id: string;
@@ -247,18 +258,16 @@ SELECT to_regclass('rollbackkit_schema_migrations')::text AS table_name
     }
 
     async #withMigrationAdvisoryLock<TValue>(handler: () => Promise<TValue>): Promise<TValue> {
-        await this.#executor.query('SELECT pg_advisory_lock($1, $2)', [
+        await this.#executor.query(ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_SQL, [
             ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_CLASS_ID,
-            ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_OBJECT_ID,
         ]);
 
         try {
             return await handler();
         } finally {
             await this.#executor
-                .query('SELECT pg_advisory_unlock($1, $2)', [
+                .query(ROLLBACKKIT_MIGRATION_ADVISORY_UNLOCK_SQL, [
                     ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_CLASS_ID,
-                    ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_OBJECT_ID,
                 ])
                 .catch(() => undefined);
         }

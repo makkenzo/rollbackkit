@@ -51,6 +51,18 @@ describe('@rollbackkit/postgres', () => {
         expect(migration?.sql).toContain('rollbackkit_action_runs_global_idempotency_idx');
     });
 
+    it('exports audit invariant migration', () => {
+        const migration = ROLLBACKKIT_POSTGRES_MIGRATIONS.find(
+            (candidate) => candidate.id === '0003_audit_invariants',
+        );
+
+        expect(migration).toBeDefined();
+        expect(migration?.sql).toContain('rollbackkit_action_runs_status_check');
+        expect(migration?.sql).toContain("actor ->> 'id' = actor_id");
+        expect(migration?.sql).toContain('rollbackkit_action_runs_target_consistency_check');
+        expect(migration?.sql).toContain('rollbackkit_side_effects_status_check');
+    });
+
     it('applies pending migrations and records them', async () => {
         const executor = new FakePostgresExecutor();
         const runner = createPostgresMigrationRunner({ executor });
@@ -60,6 +72,7 @@ describe('@rollbackkit/postgres', () => {
         expect(result.applied.map((migration) => migration.id)).toEqual([
             '0001_initial_schema',
             '0002_action_run_idempotency',
+            '0003_audit_invariants',
         ]);
         expect(result.skipped).toEqual([]);
 
@@ -94,6 +107,7 @@ describe('@rollbackkit/postgres', () => {
         expect(status.pending.map((migration) => migration.id)).toEqual([
             '0001_initial_schema',
             '0002_action_run_idempotency',
+            '0003_audit_invariants',
         ]);
         expect(
             executor.queries.some((query) =>
@@ -125,6 +139,7 @@ describe('@rollbackkit/postgres', () => {
         expect(status.skipped.map((migration) => migration.id)).toEqual(['0001_initial_schema']);
         expect(status.pending.map((migration) => migration.id)).toEqual([
             '0002_action_run_idempotency',
+            '0003_audit_invariants',
         ]);
         expect(
             executor.queries.some(
@@ -154,6 +169,7 @@ describe('@rollbackkit/postgres', () => {
 
         expect(result.applied.map((migration) => migration.id)).toEqual([
             '0002_action_run_idempotency',
+            '0003_audit_invariants',
         ]);
         expect(result.skipped.map((migration) => migration.id)).toEqual(['0001_initial_schema']);
         expect(executor.schemaMigrationRows).toEqual([
@@ -165,6 +181,11 @@ describe('@rollbackkit/postgres', () => {
             {
                 id: '0002_action_run_idempotency',
                 checksum: createMigrationChecksum('0002_action_run_idempotency'),
+                applied_at: new Date('2026-01-01T00:00:00.000Z'),
+            },
+            {
+                id: '0003_audit_invariants',
+                checksum: createMigrationChecksum('0003_audit_invariants'),
                 applied_at: new Date('2026-01-01T00:00:00.000Z'),
             },
         ]);
@@ -206,6 +227,7 @@ describe('@rollbackkit/postgres', () => {
         expect(result.skipped.map((migration) => migration.id)).toEqual([
             '0001_initial_schema',
             '0002_action_run_idempotency',
+            '0003_audit_invariants',
         ]);
         expect(
             executor.queries.some((query) =>
@@ -222,6 +244,10 @@ describe('@rollbackkit/postgres', () => {
                 '0002_action_run_idempotency',
                 new Date('2026-01-01T00:00:01.000Z'),
             ),
+            createAppliedMigrationRow(
+                '0003_audit_invariants',
+                new Date('2026-01-01T00:00:02.000Z'),
+            ),
         ]);
 
         const runner = createPostgresMigrationRunner({ executor });
@@ -232,6 +258,7 @@ describe('@rollbackkit/postgres', () => {
         expect(result.skipped.map((migration) => migration.id)).toEqual([
             '0001_initial_schema',
             '0002_action_run_idempotency',
+            '0003_audit_invariants',
         ]);
         expect(executor.queries.some((query) => query.text === 'BEGIN')).toBe(false);
     });
@@ -267,6 +294,20 @@ describe('@rollbackkit/postgres', () => {
                     query.text.includes('UPDATE rollbackkit_schema_migrations'),
             ),
         ).toBe(false);
+    });
+
+    it('uses a schema-aware advisory lock for migration coordination', async () => {
+        const executor = new FakePostgresExecutor();
+        const runner = createPostgresMigrationRunner({ executor });
+
+        await runner.getMigrationStatus();
+
+        const lockQuery = executor.queries.find((query) =>
+            query.text.includes('SELECT pg_advisory_lock'),
+        );
+
+        expect(lockQuery?.text).toContain('current_schema()');
+        expect(lockQuery?.text).toContain('rollbackkit_schema_migrations');
     });
 
     it('rejects applied migrations whose checksum no longer matches', async () => {

@@ -42,6 +42,7 @@ describeIntegration('PostgreSQL integration', () => {
             expect(firstResult.applied.map((migration) => migration.id)).toEqual([
                 '0001_initial_schema',
                 '0002_action_run_idempotency',
+                '0003_audit_invariants',
             ]);
             expect(firstResult.skipped).toEqual([]);
 
@@ -51,6 +52,7 @@ describeIntegration('PostgreSQL integration', () => {
             expect(secondResult.skipped.map((migration) => migration.id)).toEqual([
                 '0001_initial_schema',
                 '0002_action_run_idempotency',
+                '0003_audit_invariants',
             ]);
 
             const tables = await context.client.query<{ readonly table_name: string }>(
@@ -89,6 +91,29 @@ ORDER BY indexname ASC
                 'rollbackkit_action_runs_global_idempotency_idx',
                 'rollbackkit_action_runs_tenant_idempotency_idx',
             ]);
+
+            const constraints = await context.client.query<{ readonly conname: string }>(
+                `
+SELECT conname
+FROM pg_constraint
+WHERE connamespace = $1::regnamespace
+    AND conname IN (
+        'rollbackkit_action_runs_actor_consistency_check',
+        'rollbackkit_action_runs_status_check',
+        'rollbackkit_action_runs_target_consistency_check',
+        'rollbackkit_side_effects_status_check'
+    )
+ORDER BY conname ASC
+`,
+                [context.schemaName],
+            );
+
+            expect(constraints.rows.map((row) => row.conname)).toEqual([
+                'rollbackkit_action_runs_actor_consistency_check',
+                'rollbackkit_action_runs_status_check',
+                'rollbackkit_action_runs_target_consistency_check',
+                'rollbackkit_side_effects_status_check',
+            ]);
         } finally {
             await context.cleanup();
         }
@@ -116,12 +141,14 @@ ORDER BY indexname ASC
             ]);
             expect(statusBefore.pending.map((migration) => migration.id)).toEqual([
                 '0002_action_run_idempotency',
+                '0003_audit_invariants',
             ]);
 
             const result = await runner.migrate();
 
             expect(result.applied.map((migration) => migration.id)).toEqual([
                 '0002_action_run_idempotency',
+                '0003_audit_invariants',
             ]);
             expect(result.skipped.map((migration) => migration.id)).toEqual([
                 '0001_initial_schema',
@@ -133,6 +160,7 @@ ORDER BY indexname ASC
             expect(statusAfter.skipped.map((migration) => migration.id)).toEqual([
                 '0001_initial_schema',
                 '0002_action_run_idempotency',
+                '0003_audit_invariants',
             ]);
         } finally {
             await context.cleanup();
@@ -153,11 +181,11 @@ ORDER BY indexname ASC
 
             const results = await Promise.all([firstRunner.migrate(), secondRunner.migrate()]);
 
-            expect(results.filter((result) => result.applied.length === 2)).toHaveLength(1);
+            expect(results.filter((result) => result.applied.length === 3)).toHaveLength(1);
             expect(results.filter((result) => result.applied.length === 0)).toHaveLength(1);
             expect(
                 results.every(
-                    (result) => result.applied.length === 2 || result.skipped.length === 2,
+                    (result) => result.applied.length === 3 || result.skipped.length === 3,
                 ),
             ).toBe(true);
 
@@ -180,6 +208,10 @@ ORDER BY id ASC
                 },
                 {
                     id: '0002_action_run_idempotency',
+                    migration_count: 1,
+                },
+                {
+                    id: '0003_audit_invariants',
                     migration_count: 1,
                 },
             ]);
@@ -558,6 +590,7 @@ WHERE idempotency_key = $1
             const undone = await kit.undo({
                 actionRunId: run.id,
                 actor: undoActor,
+                tenantId: 'tenant_1',
             });
 
             expect(archived).toBe(false);
