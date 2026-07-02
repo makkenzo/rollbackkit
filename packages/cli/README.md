@@ -30,6 +30,17 @@ You can also pass the database URL directly:
 pnpm exec rollbackkit doctor --database-url "postgres://user:password@localhost:5432/app_database"
 ```
 
+`rollbackkit migrate` and `rollbackkit doctor` intentionally ignore generic `DATABASE_URL`.
+Use `ROLLBACKKIT_DATABASE_URL` or `--database-url` so RollbackKit never connects to an
+ambient application database by accident.
+
+Fail CI when RollbackKit migrations are pending:
+
+```bash
+ROLLBACKKIT_DATABASE_URL="postgres://user:password@localhost:5432/app_database" \
+pnpm exec rollbackkit doctor --fail-on-pending
+```
+
 The CLI exits with `0` on success and `1` on failure. Use `--verbose` to print stack traces and
 nested causes for debugging.
 

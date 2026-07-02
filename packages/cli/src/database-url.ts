@@ -1,6 +1,6 @@
-const DATABASE_URL_ENV_NAMES = ['ROLLBACKKIT_DATABASE_URL', 'DATABASE_URL'] as const;
+const DATABASE_URL_ENV_NAME = 'ROLLBACKKIT_DATABASE_URL';
 
-export type DatabaseUrlSource = 'option' | (typeof DATABASE_URL_ENV_NAMES)[number];
+export type DatabaseUrlSource = 'option' | typeof DATABASE_URL_ENV_NAME;
 
 export interface CliDatabaseConfig {
     readonly databaseUrl: string;
@@ -18,21 +18,17 @@ export function loadDatabaseConfig(
         };
     }
 
-    for (const name of DATABASE_URL_ENV_NAMES) {
-        const envValue = env[name];
+    const envValue = env[DATABASE_URL_ENV_NAME];
 
-        if (envValue !== undefined && envValue.trim() !== '') {
-            return {
-                databaseUrl: envValue,
-                databaseUrlSource: name,
-            };
-        }
+    if (envValue !== undefined && envValue.trim() !== '') {
+        return {
+            databaseUrl: envValue,
+            databaseUrlSource: DATABASE_URL_ENV_NAME,
+        };
     }
 
     throw new Error(
-        `Missing PostgreSQL database URL. Pass --database-url or set ${DATABASE_URL_ENV_NAMES.join(
-            ' / ',
-        )}.`,
+        `Missing PostgreSQL database URL. Pass --database-url or set ${DATABASE_URL_ENV_NAME}.`,
     );
 }
 

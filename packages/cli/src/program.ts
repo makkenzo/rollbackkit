@@ -7,7 +7,6 @@ import {
 } from '@rollbackkit/postgres';
 import { Command, CommanderError } from 'commander';
 import packageJson from '../package.json';
-import type { DatabaseUrlSource } from './database-url';
 import { loadDatabaseConfig } from './database-url';
 import { writeCliError } from './error-presenter';
 import type { CliWriter } from './output';
@@ -34,6 +33,10 @@ export interface RunCliOptions extends RollbackKitCliProgramOptions {
 
 interface PostgresCommandOptions {
     readonly databaseUrl?: string;
+}
+
+interface DoctorCommandOptions extends PostgresCommandOptions {
+    readonly failOnPending?: boolean;
 }
 
 interface GlobalCommandOptions {
@@ -69,9 +72,7 @@ export function createRollbackKitCliProgram(options: RollbackKitCliProgramOption
         .description('Apply RollbackKit PostgreSQL migrations.')
         .option('--database-url <url>', 'PostgreSQL connection string.')
         .action(async (command: PostgresCommandOptions) => {
-            const { databaseUrl, databaseUrlSource } = loadDatabaseConfig(command.databaseUrl, env);
-
-            writeDatabaseUrlSourceWarning(stderr, databaseUrlSource);
+            const { databaseUrl } = loadDatabaseConfig(command.databaseUrl, env);
 
             const result = await runMigrations({
                 databaseUrl,
@@ -99,10 +100,12 @@ export function createRollbackKitCliProgram(options: RollbackKitCliProgramOption
         .command('doctor')
         .description('Check RollbackKit PostgreSQL connectivity and migration status.')
         .option('--database-url <url>', 'PostgreSQL connection string.')
-        .action(async (command: PostgresCommandOptions) => {
-            const { databaseUrl, databaseUrlSource } = loadDatabaseConfig(command.databaseUrl, env);
-
-            writeDatabaseUrlSourceWarning(stderr, databaseUrlSource);
+        .option(
+            '--fail-on-pending',
+            'Exit with code 1 when RollbackKit PostgreSQL migrations are pending.',
+        )
+        .action(async (command: DoctorCommandOptions) => {
+            const { databaseUrl } = loadDatabaseConfig(command.databaseUrl, env);
 
             const status = await readMigrationStatus({
                 databaseUrl,
@@ -126,6 +129,14 @@ export function createRollbackKitCliProgram(options: RollbackKitCliProgramOption
             for (const migration of status.pending) {
                 writeLine(stdout, `- ${migration.id}: ${migration.description}`);
             }
+
+            if (command.failOnPending === true) {
+                throw new CommanderError(
+                    1,
+                    'rollbackkit.pendingMigrations',
+                    'Pending RollbackKit PostgreSQL migrations found.',
+                );
+            }
         });
 
     return program;
@@ -148,6 +159,10 @@ export async function runCli(options: RunCliOptions = {}): Promise<number> {
             return 0;
         }
 
+        if (error instanceof CommanderError && error.code.startsWith('commander.')) {
+            return error.exitCode;
+        }
+
         writeCliError(stderr, error, {
             verbose: getVerboseFlag(program, options.argv ?? process.argv),
         });
@@ -158,15 +173,4 @@ export async function runCli(options: RunCliOptions = {}): Promise<number> {
 
 function getVerboseFlag(program: Command, argv: readonly string[]): boolean {
     return (program.opts<GlobalCommandOptions>().verbose ?? argv.includes('--verbose')) === true;
-}
-
-function writeDatabaseUrlSourceWarning(writer: CliWriter, source: DatabaseUrlSource): void {
-    if (source !== 'DATABASE_URL') {
-        return;
-    }
-
-    writeLine(
-        writer,
-        'Using DATABASE_URL for RollbackKit CLI. Prefer ROLLBACKKIT_DATABASE_URL or --database-url for schema changes.',
-    );
 }

@@ -125,7 +125,7 @@ describe('@rollbackkit/cli', () => {
         expect(stdout.output).toContain('- 0002_action_run_idempotency:');
     });
 
-    it('reads database url from environment', async () => {
+    it('reads RollbackKit database url from environment', async () => {
         const stdout = new MemoryWriter();
         let receivedDatabaseUrl: string | undefined;
 
@@ -153,16 +153,114 @@ describe('@rollbackkit/cli', () => {
         expect(receivedDatabaseUrl).toBe('postgres://env-url');
     });
 
-    it('warns when PostgreSQL commands fall back to DATABASE_URL', async () => {
+    it('refuses to migrate with only generic DATABASE_URL', async () => {
         const stdout = new MemoryWriter();
         const stderr = new MemoryWriter();
+        let called = false;
 
-        const program = createRollbackKitCliProgram({
+        const exitCode = await runCli({
+            argv: ['node', 'rollbackkit', 'migrate'],
             stdout,
             stderr,
             env: {
                 DATABASE_URL: 'postgres://ambient-url',
             },
+            migratePostgresDatabase: async () => {
+                called = true;
+
+                return {
+                    applied: [],
+                    skipped: [],
+                } satisfies PostgresMigrationResult;
+            },
+        });
+
+        expect(exitCode).toBe(1);
+        expect(called).toBe(false);
+        expect(stdout.output).toBe('');
+        expect(stderr.output).toContain(
+            'Missing PostgreSQL database URL. Pass --database-url or set ROLLBACKKIT_DATABASE_URL.',
+        );
+    });
+
+    it('ignores generic DATABASE_URL for doctor', async () => {
+        const stdout = new MemoryWriter();
+        const stderr = new MemoryWriter();
+        let called = false;
+
+        const exitCode = await runCli({
+            argv: ['node', 'rollbackkit', 'doctor'],
+            stdout,
+            stderr,
+            env: {
+                DATABASE_URL: 'postgres://ambient-url',
+            },
+            getPostgresMigrationStatus: async () => {
+                called = true;
+
+                return {
+                    schemaTableExists: false,
+                    applied: [],
+                    skipped: [],
+                    pending: [],
+                } satisfies PostgresMigrationStatus;
+            },
+        });
+
+        expect(exitCode).toBe(1);
+        expect(called).toBe(false);
+        expect(stdout.output).toBe('');
+        expect(stderr.output).toContain(
+            'Missing PostgreSQL database URL. Pass --database-url or set ROLLBACKKIT_DATABASE_URL.',
+        );
+    });
+
+    it('fails doctor when pending migrations are not allowed', async () => {
+        const stdout = new MemoryWriter();
+        const stderr = new MemoryWriter();
+
+        const exitCode = await runCli({
+            argv: [
+                'node',
+                'rollbackkit',
+                'doctor',
+                '--database-url',
+                'postgres://test',
+                '--fail-on-pending',
+            ],
+            stdout,
+            stderr,
+            env: {},
+            getPostgresMigrationStatus: async () =>
+                ({
+                    schemaTableExists: true,
+                    applied: [],
+                    skipped: [],
+                    pending: [pendingMigration, idempotencyMigration],
+                }) satisfies PostgresMigrationStatus,
+        });
+
+        expect(exitCode).toBe(1);
+        expect(stdout.output).toContain('Schema: 2 pending migration(s)');
+        expect(stderr.output).toContain('Pending RollbackKit PostgreSQL migrations found.');
+    });
+
+    it('passes doctor pending gate when schema is up to date', async () => {
+        const stdout = new MemoryWriter();
+        const stderr = new MemoryWriter();
+
+        const exitCode = await runCli({
+            argv: [
+                'node',
+                'rollbackkit',
+                'doctor',
+                '--database-url',
+                'postgres://test',
+                '--fail-on-pending',
+            ],
+            stdout,
+            stderr,
+            env: {},
             getPostgresMigrationStatus: async () =>
                 ({
                     schemaTableExists: false,
@@ -172,13 +270,9 @@ describe('@rollbackkit/cli', () => {
                 }) satisfies PostgresMigrationStatus,
         });
 
-        await program.parseAsync(['node', 'rollbackkit', 'doctor'], {
-            from: 'node',
-        });
-
-        expect(stderr.output).toContain(
-            'Using DATABASE_URL for RollbackKit CLI. Prefer ROLLBACKKIT_DATABASE_URL or --database-url for schema changes.',
-        );
+        expect(exitCode).toBe(0);
+        expect(stdout.output).toContain('Schema: up to date');
+        expect(stderr.output).toBe('');
     });
 
     it('requires a database url for PostgreSQL commands', async () => {
@@ -194,7 +288,7 @@ describe('@rollbackkit/cli', () => {
                 from: 'node',
             }),
         ).rejects.toThrow(
-            'Missing PostgreSQL database URL. Pass --database-url or set ROLLBACKKIT_DATABASE_URL / DATABASE_URL.',
+            'Missing PostgreSQL database URL. Pass --database-url or set ROLLBACKKIT_DATABASE_URL.',
         );
     });
 
@@ -212,11 +306,11 @@ describe('@rollbackkit/cli', () => {
         expect(exitCode).toBe(1);
         expect(stdout.output).toBe('');
         expect(stderr.output).toContain(
-            'Missing PostgreSQL database URL. Pass --database-url or set ROLLBACKKIT_DATABASE_URL / DATABASE_URL.',
+            'Missing PostgreSQL database URL. Pass --database-url or set ROLLBACKKIT_DATABASE_URL.',
         );
     });
 
-    it('returns a non-zero exit code for parser errors without exiting the process', async () => {
+    it('returns a non-zero exit code for parser errors without duplicating the message', async () => {
         const stdout = new MemoryWriter();
         const stderr = new MemoryWriter();
 
@@ -230,6 +324,7 @@ describe('@rollbackkit/cli', () => {
         expect(exitCode).toBe(1);
         expect(stdout.output).toBe('');
         expect(stderr.output).toContain("unknown command 'unknown-command'");
+        expect(countOccurrences(stderr.output, "unknown command 'unknown-command'")).toBe(1);
     });
 
     it('prints nested error causes in verbose mode', async () => {
@@ -275,4 +370,8 @@ function readPackageVersion(): string {
     };
 
     return packageJson.version;
+}
+
+function countOccurrences(value: string, needle: string): number {
+    return value.split(needle).length - 1;
 }
