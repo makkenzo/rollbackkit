@@ -159,6 +159,53 @@ describe('RollbackKit undo lifecycle', () => {
         });
     });
 
+    it('rejects undo when the request tenant does not match the action run tenant', async () => {
+        let undoCalled = false;
+
+        const kit = createRollbackKit({
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => ({}),
+                    undo: async () => {
+                        undoCalled = true;
+                        return {};
+                    },
+                }),
+            ],
+        });
+
+        const run = await kit.execute({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            input: {
+                projectId: 'project_1',
+            },
+        });
+
+        await expect(
+            kit.undo({
+                actionRunId: run.id,
+                actor: undoActor,
+                tenantId: 'tenant_2',
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_PERMISSION_DENIED',
+        });
+
+        expect(undoCalled).toBe(false);
+        await expect(kit.getActionRun(run.id)).resolves.toMatchObject({
+            status: 'completed',
+        });
+    });
+
     it('rejects undo for irreversible actions', async () => {
         const kit = createRollbackKit({
             actions: [
@@ -279,6 +326,64 @@ describe('RollbackKit undo lifecycle', () => {
                 code: 'ACTION_CONFLICT',
                 message: 'Project is active again.',
             },
+        });
+    });
+
+    it('rejects undo when conflict checks record conflicts without throwing', async () => {
+        let undoCalled = false;
+
+        const kit = createRollbackKit({
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => ({}),
+                    checkConflicts: async (context) => {
+                        await context.conflicts.record('Project is active again.', {
+                            projectId: 'project_1',
+                        });
+                    },
+                    undo: async () => {
+                        undoCalled = true;
+                        return {};
+                    },
+                }),
+            ],
+        });
+
+        const run = await kit.execute({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+        });
+
+        await expect(
+            kit.undo({
+                actionRunId: run.id,
+                actor: undoActor,
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_CONFLICT',
+        });
+
+        expect(undoCalled).toBe(false);
+        await expect(kit.getConflicts(run.id)).resolves.toMatchObject([
+            {
+                reason: 'Project is active again.',
+                details: {
+                    projectId: 'project_1',
+                },
+            },
+        ]);
+        await expect(kit.getActionRun(run.id)).resolves.toMatchObject({
+            status: 'undo_failed',
         });
     });
 

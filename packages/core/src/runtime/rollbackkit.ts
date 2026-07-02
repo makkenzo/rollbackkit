@@ -25,13 +25,15 @@ import { parseActionInput } from './action-input';
 import { resolveActionTarget } from './action-target';
 import { authorizeAction } from './authorization';
 import { createBaseActionContext, createBaseActionContextFromRun } from './contexts';
-import { assertIdempotentInputMatches, createActionInputFingerprint } from './idempotency';
+import { assertIdempotentRequestMatches, createActionInputFingerprint } from './idempotency';
 import { applyDefaultUndoWindow, createUndoExpiration, mergeMetadata } from './lifecycle-helpers';
 import {
     assertActionRunCanBeUndone,
+    assertUndoTenantMatches,
     createActionDefinitionNotUndoableError,
     createActionNotUndoableError,
     createActionRunNotFoundError,
+    createRecordedConflictError,
     normalizeExecutionError,
     normalizeUndoError,
 } from './runtime-errors';
@@ -52,6 +54,7 @@ export interface RollbackKitOptions {
 export interface UndoActionRequest {
     readonly actionRunId: string;
     readonly actor: ActionActor;
+    readonly tenantId?: string;
     readonly metadata?: JsonObject;
 }
 
@@ -205,11 +208,12 @@ export class RollbackKit {
                 });
             }
 
-            assertIdempotentInputMatches(run, {
+            assertIdempotentRequestMatches(run, {
                 actionName: action.name,
                 idempotencyKey,
                 canonicalInput: inputFingerprint.canonicalInput,
                 inputHash: inputFingerprint.inputHash,
+                ...(target === undefined ? {} : { target }),
             });
 
             return run;
@@ -257,6 +261,8 @@ export class RollbackKit {
         if (existingRun === null) {
             throw createActionRunNotFoundError(request.actionRunId);
         }
+
+        assertUndoTenantMatches(existingRun, request.tenantId);
 
         const action = this.registry.require(existingRun.name);
         const authContext = createBaseActionContextFromRun({
@@ -313,6 +319,10 @@ export class RollbackKit {
                     } as const;
 
                     await action.checkConflicts?.(undoContext);
+
+                    if (conflicts.hasRecords()) {
+                        throw createRecordedConflictError(lockedRun);
+                    }
 
                     const result = await action.undo(undoContext);
 

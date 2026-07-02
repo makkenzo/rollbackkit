@@ -115,6 +115,10 @@ export class DeferredConflictRecorder implements ConflictRecorder {
         return conflict;
     }
 
+    hasRecords(): boolean {
+        return this.#records.length > 0;
+    }
+
     async flush(storage: StorageAdapter): Promise<void> {
         const records = this.#records.splice(0);
 

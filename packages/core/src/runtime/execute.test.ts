@@ -464,6 +464,62 @@ describe('RollbackKit execute lifecycle', () => {
         expect(executionCount).toBe(1);
     });
 
+    it('rejects idempotency key reuse with the same input and a different target', async () => {
+        let executionCount = 0;
+
+        const kit = createRollbackKit({
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => {
+                        executionCount += 1;
+
+                        return {};
+                    },
+                    undo: noopUndo,
+                }),
+            ],
+        });
+
+        await kit.execute({
+            name: 'project.archive',
+            actor,
+            idempotencyKey: 'request_1',
+            target: {
+                id: 'project_1',
+                type: 'project',
+            },
+            input: {
+                dryRun: false,
+            },
+        });
+
+        await expect(
+            kit.execute({
+                name: 'project.archive',
+                actor,
+                idempotencyKey: 'request_1',
+                target: {
+                    id: 'project_2',
+                    type: 'project',
+                },
+                input: {
+                    dryRun: false,
+                },
+            }),
+        ).rejects.toMatchObject({
+            code: 'IDEMPOTENCY_CONFLICT',
+        });
+
+        expect(executionCount).toBe(1);
+    });
+
     it('rejects executing undoable actions without an undo handler', async () => {
         const kit = createRollbackKit({
             actions: [

@@ -53,6 +53,34 @@ export function assertActionRunCanBeUndone(run: ActionRun, now: Date): void {
     }
 }
 
+export function assertUndoTenantMatches(run: ActionRun, tenantId: string | undefined): void {
+    if (tenantId === undefined || run.tenantId === tenantId) {
+        return;
+    }
+
+    throw new RollbackKitError({
+        code: 'ACTION_PERMISSION_DENIED',
+        message: `Action run "${run.id}" does not belong to tenant "${tenantId}".`,
+        details: {
+            actionRunId: run.id,
+            actionName: run.name,
+            tenantId,
+            ...(run.tenantId === undefined ? {} : { actionRunTenantId: run.tenantId }),
+        },
+    });
+}
+
+export function createRecordedConflictError(run: ActionRun): RollbackKitError {
+    return new RollbackKitError({
+        code: 'ACTION_CONFLICT',
+        message: `Action run "${run.id}" cannot be undone because conflict checks recorded unsafe state.`,
+        details: {
+            actionRunId: run.id,
+            actionName: run.name,
+        },
+    });
+}
+
 export function createActionRunNotFoundError(actionRunId: string): RollbackKitError {
     return new RollbackKitError({
         code: 'ACTION_NOT_FOUND',

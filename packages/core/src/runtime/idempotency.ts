@@ -1,4 +1,5 @@
 import { RollbackKitError } from '../errors/rollbackkit-error';
+import type { ActionTarget } from '../identity/target';
 import type { ActionRun } from '../lifecycle/lifecycle';
 import type { JsonObject, JsonValue } from '../shared/json';
 
@@ -20,30 +21,60 @@ export function createActionInputFingerprint(input: JsonValue): ActionInputFinge
     };
 }
 
-export function assertIdempotentInputMatches(
+export function assertIdempotentRequestMatches(
     run: ActionRun,
     request: {
         readonly actionName: string;
         readonly idempotencyKey: string;
         readonly canonicalInput: string;
         readonly inputHash: string;
+        readonly target?: ActionTarget;
     },
 ): void {
-    if (stringifyCanonicalJson(run.input) === request.canonicalInput) {
+    if (stringifyCanonicalJson(run.input) !== request.canonicalInput) {
+        throw new RollbackKitError({
+            code: 'IDEMPOTENCY_CONFLICT',
+            message: `Idempotency key "${request.idempotencyKey}" was already used for action "${request.actionName}" with different input.`,
+            details: {
+                actionName: request.actionName,
+                actionRunId: run.id,
+                idempotencyKey: request.idempotencyKey,
+                existingInputHash:
+                    run.inputHash ?? createActionInputFingerprint(run.input).inputHash,
+                requestedInputHash: request.inputHash,
+            },
+        });
+    }
+
+    const existingTarget = stringifyCanonicalJson(actionTargetToJsonValue(run.target));
+    const requestedTarget = stringifyCanonicalJson(actionTargetToJsonValue(request.target));
+
+    if (existingTarget === requestedTarget) {
         return;
     }
 
     throw new RollbackKitError({
         code: 'IDEMPOTENCY_CONFLICT',
-        message: `Idempotency key "${request.idempotencyKey}" was already used for action "${request.actionName}" with different input.`,
+        message: `Idempotency key "${request.idempotencyKey}" was already used for action "${request.actionName}" with different target.`,
         details: {
             actionName: request.actionName,
             actionRunId: run.id,
             idempotencyKey: request.idempotencyKey,
-            existingInputHash: run.inputHash ?? createActionInputFingerprint(run.input).inputHash,
-            requestedInputHash: request.inputHash,
         },
     });
+}
+
+function actionTargetToJsonValue(target: ActionTarget | undefined): JsonValue {
+    if (target === undefined) {
+        return null;
+    }
+
+    return {
+        id: target.id,
+        type: target.type,
+        ...(target.label === undefined ? {} : { label: target.label }),
+        ...(target.metadata === undefined ? {} : { metadata: target.metadata }),
+    };
 }
 
 function stringifyCanonicalJson(value: JsonValue): string {
