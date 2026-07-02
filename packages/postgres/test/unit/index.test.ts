@@ -126,6 +126,13 @@ describe('@rollbackkit/postgres', () => {
         expect(status.pending.map((migration) => migration.id)).toEqual([
             '0002_action_run_idempotency',
         ]);
+        expect(
+            executor.queries.some(
+                (query) =>
+                    query.text.includes('ALTER TABLE rollbackkit_schema_migrations') ||
+                    query.text.includes('UPDATE rollbackkit_schema_migrations'),
+            ),
+        ).toBe(false);
     });
 
     it('backfills checksums for known migrations applied before checksum tracking', async () => {
@@ -243,6 +250,23 @@ describe('@rollbackkit/postgres', () => {
                 appliedAt: new Date('2026-01-01T00:00:00.000Z'),
             },
         ]);
+    });
+
+    it('reads applied migrations without creating or changing migration state', async () => {
+        const executor = new FakePostgresExecutor();
+        const runner = createPostgresMigrationRunner({ executor });
+
+        await expect(runner.getAppliedMigrations()).resolves.toEqual([]);
+        expect(
+            executor.queries.some(
+                (query) =>
+                    query.text.includes(
+                        'CREATE TABLE IF NOT EXISTS rollbackkit_schema_migrations',
+                    ) ||
+                    query.text.includes('ALTER TABLE rollbackkit_schema_migrations') ||
+                    query.text.includes('UPDATE rollbackkit_schema_migrations'),
+            ),
+        ).toBe(false);
     });
 
     it('rejects applied migrations whose checksum no longer matches', async () => {

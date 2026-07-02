@@ -104,7 +104,11 @@ export class PostgresMigrationRunner {
 
     async getAppliedMigrations(): Promise<readonly AppliedPostgresMigration[]> {
         return this.#withMigrationAdvisoryLock(async () => {
-            await this.#ensureSchemaMigrationsTable();
+            const schemaTableExists = await this.#readSchemaMigrationsTableExists();
+
+            if (!schemaTableExists) {
+                return [];
+            }
 
             return this.#readAppliedMigrations();
         });
@@ -117,8 +121,6 @@ export class PostgresMigrationRunner {
             if (!schemaTableExists) {
                 return this.#createMigrationStatus([], false);
             }
-
-            await this.#ensureSchemaMigrationChecksums();
 
             return this.#createMigrationStatus(await this.#readAppliedMigrations(), true);
         });
