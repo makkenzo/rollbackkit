@@ -238,6 +238,8 @@ describe('PostgresStore core lifecycle integration', () => {
             'BEGIN',
             expect.stringContaining('FOR UPDATE'),
             'COMMIT',
+            'BEGIN',
+            'COMMIT',
         ]);
     });
 });

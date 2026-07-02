@@ -500,6 +500,72 @@ describe('RollbackKit undo lifecycle', () => {
         });
     });
 
+    it('keeps undo failure state inside the action run lock', async () => {
+        const storage = createRollbackingActionRunLockStorage();
+
+        const kit = createRollbackKit({
+            storage,
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => ({}),
+                    checkConflicts: async (context) => {
+                        await context.conflicts.record('Project is active again.', {
+                            projectId: 'project_1',
+                        });
+
+                        throw new RollbackKitError({
+                            code: 'ACTION_CONFLICT',
+                            message: 'Project is active again.',
+                        });
+                    },
+                    undo: async () => ({}),
+                }),
+            ],
+        });
+
+        const run = await kit.execute({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+        });
+
+        await expect(
+            kit.undo({
+                actionRunId: run.id,
+                actor: undoActor,
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_CONFLICT',
+        });
+
+        expect(storage.lockRollbackCount).toBe(0);
+        expect(storage.conflicts).toEqual([
+            {
+                actionRunId: run.id,
+                reason: 'Project is active again.',
+                details: {
+                    projectId: 'project_1',
+                },
+            },
+        ]);
+        await expect(kit.getActionRun(run.id)).resolves.toMatchObject({
+            status: 'undo_failed',
+            error: {
+                code: 'ACTION_CONFLICT',
+                message: 'Project is active again.',
+            },
+        });
+    });
+
     it('rejects undo after undo window expires', async () => {
         let now = new Date('2026-01-01T00:00:00.000Z');
 
@@ -644,12 +710,17 @@ describe('RollbackKit undo lifecycle', () => {
 
 function createRollbackingActionRunLockStorage(): StorageAdapter & {
     readonly conflicts: RecordConflictInput[];
+    readonly lockRollbackCount: number;
 } {
     const storage = createMemoryStorageAdapter();
     const conflicts: RecordConflictInput[] = [];
+    let lockRollbackCount = 0;
 
     return {
         conflicts,
+        get lockRollbackCount() {
+            return lockRollbackCount;
+        },
         withTransaction: (handler) => storage.withTransaction(handler),
         createActionRun: <TInput extends JsonValue = JsonValue>(
             input: CreateActionRunInput<TInput>,
@@ -686,6 +757,7 @@ function createRollbackingActionRunLockStorage(): StorageAdapter & {
             try {
                 return await storage.withActionRunLock(actionRunId, handler);
             } catch (error) {
+                lockRollbackCount += 1;
                 conflicts.splice(conflictCountBeforeLock);
 
                 if (runBeforeLock !== null) {

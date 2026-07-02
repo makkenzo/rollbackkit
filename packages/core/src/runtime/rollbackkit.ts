@@ -278,82 +278,84 @@ export class RollbackKit {
             phase: 'undo',
         });
 
-        let undoStarted = false;
+        const undoHandler = action.undo;
+
+        if (undoHandler === undefined) {
+            throw createActionNotUndoableError(
+                existingRun,
+                'Action definition does not provide an undo handler.',
+            );
+        }
+
         let conflicts: DeferredConflictRecorder | undefined;
 
         try {
-            const undoneRun = await this.#storage.withActionRunLock(
+            const undoRunningRun = await this.#storage.withActionRunLock(
                 request.actionRunId,
                 async (lockedRun) => {
                     assertActionRunCanBeUndone(lockedRun, this.#clock.now());
 
-                    if (action.undo === undefined) {
-                        throw createActionNotUndoableError(
-                            lockedRun,
-                            'Action definition does not provide an undo handler.',
-                        );
-                    }
-
-                    const baseContext = createBaseActionContextFromRun({
-                        actionName: action.name,
-                        run: lockedRun,
-                        actor: request.actor,
-                        clock: this.#clock,
-                        ...(request.metadata === undefined ? {} : { metadata: request.metadata }),
-                    });
-
-                    const undoRunningRun = await this.#storage.updateActionRun(lockedRun.id, {
+                    return this.#storage.updateActionRun(lockedRun.id, {
                         status: 'undo_running',
                         undoStartedAt: this.#clock.now(),
-                    });
-
-                    undoStarted = true;
-                    conflicts = new DeferredConflictRecorder(lockedRun.id, this.#clock);
-
-                    const undoContext = {
-                        ...baseContext,
-                        phase: 'undo',
-                        run: undoRunningRun,
-                        snapshots: new BoundSnapshotReader(this.#storage, lockedRun.id),
-                        conflicts,
-                    } as const;
-
-                    await action.checkConflicts?.(undoContext);
-
-                    if (conflicts.hasRecords()) {
-                        throw createRecordedConflictError(lockedRun);
-                    }
-
-                    const result = await action.undo(undoContext);
-
-                    const undoneMetadata = mergeMetadata(undoRunningRun.metadata, result.metadata);
-
-                    return await this.#storage.updateActionRun(lockedRun.id, {
-                        status: 'undone',
-                        undoneAt: this.#clock.now(),
-                        undoneBy: request.actor,
-                        ...(result.data === undefined ? {} : { undoResult: result.data }),
-                        ...(undoneMetadata === undefined ? {} : { metadata: undoneMetadata }),
                     });
                 },
             );
 
-            await conflicts?.flush(this.#storage);
+            conflicts = new DeferredConflictRecorder(undoRunningRun.id, this.#clock);
+
+            const baseContext = createBaseActionContextFromRun({
+                actionName: action.name,
+                run: undoRunningRun,
+                actor: request.actor,
+                clock: this.#clock,
+                ...(request.metadata === undefined ? {} : { metadata: request.metadata }),
+            });
+
+            const undoContext = {
+                ...baseContext,
+                phase: 'undo',
+                run: undoRunningRun,
+                snapshots: new BoundSnapshotReader(this.#storage, undoRunningRun.id),
+                conflicts,
+            } as const;
+
+            const undoneRun = await this.#storage.withTransaction(async () => {
+                await action.checkConflicts?.(undoContext);
+
+                if (conflicts?.hasRecords()) {
+                    throw createRecordedConflictError(undoRunningRun);
+                }
+
+                const result = await undoHandler(undoContext);
+
+                const undoneMetadata = mergeMetadata(undoRunningRun.metadata, result.metadata);
+
+                return this.#storage.updateActionRun(undoRunningRun.id, {
+                    status: 'undone',
+                    undoneAt: this.#clock.now(),
+                    undoneBy: request.actor,
+                    ...(result.data === undefined ? {} : { undoResult: result.data }),
+                    ...(undoneMetadata === undefined ? {} : { metadata: undoneMetadata }),
+                });
+            });
+
+            conflicts = undefined;
 
             return undoneRun;
         } catch (error) {
-            if (!undoStarted) {
+            if (conflicts === undefined) {
                 throw error;
             }
 
             const rollbackError = normalizeUndoError(action.name, error);
 
-            await conflicts?.flush(this.#storage);
-
             await this.#storage.updateActionRun(existingRun.id, {
                 status: 'undo_failed',
                 error: rollbackError.toJSON(),
             });
+
+            await conflicts.flush(this.#storage);
 
             throw rollbackError;
         }

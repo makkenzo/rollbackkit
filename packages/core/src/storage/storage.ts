@@ -105,12 +105,26 @@ export interface ActionHistoryQuery {
 }
 
 export interface StorageAdapter {
+    /**
+     * Run handler writes atomically.
+     *
+     * If the handler rejects, storage writes made through this adapter inside the handler must be
+     * rolled back. Adapters that share a database connection with product writes should execute the
+     * handler on that same transaction-capable connection.
+     */
     withTransaction<TValue>(handler: () => Promise<TValue>): Promise<TValue>;
 
     createActionRun<TInput extends JsonValue = JsonValue>(
         input: CreateActionRunInput<TInput>,
     ): Promise<ActionRun<TInput>>;
 
+    /**
+     * Atomically create or return an existing idempotent action run for the tuple:
+     * tenantId, action name, actor type, actor id and idempotency key.
+     *
+     * Existing runs returned from this method are validated by the runtime against the original
+     * input hash and target.
+     */
     claimActionRun<TInput extends JsonValue = JsonValue>(
         input: ClaimActionRunInput<TInput>,
     ): Promise<ClaimActionRunResult<TInput>>;
@@ -140,6 +154,14 @@ export interface StorageAdapter {
 
     queryActionRuns(query: ActionHistoryQuery): Promise<readonly ActionRun[]>;
 
+    /**
+     * Serialize the handler for one action run id and pass the latest locked run to it.
+     *
+     * Database adapters should use row-level locking or an equivalent per-run mutex. The handler is
+     * intended for short state transitions such as claiming `undo_running`; long-running product
+     * undo work should happen after the run has been claimed so failed undo attempts cannot roll
+     * back to `completed` and be claimed again.
+     */
     withActionRunLock<TValue>(
         actionRunId: string,
         handler: (run: ActionRun) => Promise<TValue>,
