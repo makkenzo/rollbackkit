@@ -48,7 +48,25 @@ function writeVerboseDetails(
         writeLine(writer, error.stack);
     }
 
-    if (error.cause !== undefined) {
-        writeLine(writer, `Cause: ${String(error.cause)}`);
+    writeCauseChain(writer, error.cause);
+}
+
+function writeCauseChain(writer: CliWriter, cause: unknown): void {
+    if (cause === undefined) {
+        return;
     }
+
+    writeLine(writer, `Caused by: ${formatCause(cause)}`);
+
+    if (cause instanceof Error) {
+        writeCauseChain(writer, cause.cause);
+    }
+}
+
+function formatCause(cause: unknown): string {
+    if (cause instanceof Error) {
+        return `${cause.name}: ${cause.message}`;
+    }
+
+    return String(cause);
 }

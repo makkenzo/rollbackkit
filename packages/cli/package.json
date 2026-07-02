@@ -33,6 +33,9 @@
     "bin": {
         "rollbackkit": "./dist/bin.mjs"
     },
+    "publishConfig": {
+        "access": "public"
+    },
     "exports": {
         ".": {
             "types": "./dist/index.d.mts",

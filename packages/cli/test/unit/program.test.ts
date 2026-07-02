@@ -153,6 +153,34 @@ describe('@rollbackkit/cli', () => {
         expect(receivedDatabaseUrl).toBe('postgres://env-url');
     });
 
+    it('warns when PostgreSQL commands fall back to DATABASE_URL', async () => {
+        const stdout = new MemoryWriter();
+        const stderr = new MemoryWriter();
+
+        const program = createRollbackKitCliProgram({
+            stdout,
+            stderr,
+            env: {
+                DATABASE_URL: 'postgres://ambient-url',
+            },
+            getPostgresMigrationStatus: async () =>
+                ({
+                    schemaTableExists: false,
+                    applied: [],
+                    skipped: [],
+                    pending: [],
+                }) satisfies PostgresMigrationStatus,
+        });
+
+        await program.parseAsync(['node', 'rollbackkit', 'doctor'], {
+            from: 'node',
+        });
+
+        expect(stderr.output).toContain(
+            'Using DATABASE_URL for RollbackKit CLI. Prefer ROLLBACKKIT_DATABASE_URL or --database-url for schema changes.',
+        );
+    });
+
     it('requires a database url for PostgreSQL commands', async () => {
         const stdout = new MemoryWriter();
 
@@ -186,6 +214,56 @@ describe('@rollbackkit/cli', () => {
         expect(stderr.output).toContain(
             'Missing PostgreSQL database URL. Pass --database-url or set ROLLBACKKIT_DATABASE_URL / DATABASE_URL.',
         );
+    });
+
+    it('returns a non-zero exit code for parser errors without exiting the process', async () => {
+        const stdout = new MemoryWriter();
+        const stderr = new MemoryWriter();
+
+        const exitCode = await runCli({
+            argv: ['node', 'rollbackkit', 'unknown-command'],
+            stdout,
+            stderr,
+            env: {},
+        });
+
+        expect(exitCode).toBe(1);
+        expect(stdout.output).toBe('');
+        expect(stderr.output).toContain("unknown command 'unknown-command'");
+    });
+
+    it('prints nested error causes in verbose mode', async () => {
+        const stdout = new MemoryWriter();
+        const stderr = new MemoryWriter();
+        const rootCause = new Error('socket closed');
+        const databaseCause = new Error('connection failed', {
+            cause: rootCause,
+        });
+        const error = new Error('migration failed', {
+            cause: databaseCause,
+        });
+
+        const exitCode = await runCli({
+            argv: [
+                'node',
+                'rollbackkit',
+                '--verbose',
+                'migrate',
+                '--database-url',
+                'postgres://test',
+            ],
+            stdout,
+            stderr,
+            env: {},
+            migratePostgresDatabase: async () => {
+                throw error;
+            },
+        });
+
+        expect(exitCode).toBe(1);
+        expect(stderr.output).toContain('migration failed');
+        expect(stderr.output).toContain('Caused by: Error: connection failed');
+        expect(stderr.output).toContain('Caused by: Error: socket closed');
     });
 });
 
