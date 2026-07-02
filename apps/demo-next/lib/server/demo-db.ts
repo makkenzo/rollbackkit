@@ -2,7 +2,7 @@ import 'server-only';
 
 import { Pool } from 'pg';
 
-const DATABASE_URL_ENV_NAMES = ['ROLLBACKKIT_DEMO_DATABASE_URL', 'DATABASE_URL'] as const;
+const DEMO_DATABASE_URL_ENV_NAME = 'ROLLBACKKIT_DEMO_DATABASE_URL';
 
 let demoPool: Pool | undefined;
 
@@ -25,12 +25,10 @@ export async function closeDemoPostgresPool(): Promise<void> {
 }
 
 function resolveDemoDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string {
-    const databaseUrl = DATABASE_URL_ENV_NAMES.map((name) => env[name]).find(
-        (value): value is string => value !== undefined && value.trim() !== '',
-    );
+    const databaseUrl = env[DEMO_DATABASE_URL_ENV_NAME];
 
-    if (databaseUrl === undefined) {
-        throw new Error(`Missing demo database URL. Set ${DATABASE_URL_ENV_NAMES.join(' or ')}.`);
+    if (databaseUrl === undefined || databaseUrl.trim() === '') {
+        throw new Error(`Missing demo database URL. Set ${DEMO_DATABASE_URL_ENV_NAME}.`);
     }
 
     return databaseUrl;

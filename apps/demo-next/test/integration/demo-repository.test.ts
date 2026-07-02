@@ -5,7 +5,7 @@ import { closeDemoPostgresPool } from '../../lib/server/demo-db';
 import { getDemoDashboardData } from '../../lib/server/demo-repository';
 import { readDemoSql } from '../helpers/demo-sql';
 
-const databaseUrl = process.env.ROLLBACKKIT_DEMO_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.ROLLBACKKIT_DEMO_DATABASE_URL;
 const describeIntegration = databaseUrl === undefined ? describe.skip : describe;
 
 describeIntegration('demo repository', () => {

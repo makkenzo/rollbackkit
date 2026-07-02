@@ -10,7 +10,7 @@ import {
 import { closeDemoPostgresPool } from '../../lib/server/demo-db';
 import { readDemoSql } from '../helpers/demo-sql';
 
-const databaseUrl = process.env.ROLLBACKKIT_DEMO_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.ROLLBACKKIT_DEMO_DATABASE_URL;
 const describeIntegration = databaseUrl === undefined ? describe.skip : describe;
 
 let client: Client | undefined;

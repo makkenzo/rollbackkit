@@ -7,6 +7,8 @@ RollbackKit helps TypeScript teams model dangerous SaaS actions as explicit prod
 
 This demo shows a small workspace with projects, members and documents. It is designed to demonstrate how actions such as archiving a project, changing a member role or removing a member can be made safer through RollbackKit.
 
+This is a fixture demo, not a production auth or request-boundary template. The app runs against seeded demo data and uses a hard-coded request context: workspace `workspace_acme`, tenant `workspace_acme` and actor `member_ada` (`Ada Lovelace`). Production apps must derive tenant, workspace, actor and permissions from their own authenticated request boundary before calling RollbackKit.
+
 ## Local setup
 
 Create a local environment file:
@@ -20,6 +22,8 @@ Edit `apps/demo-next/.env` and set the demo database URL:
 ```bash
 ROLLBACKKIT_DEMO_DATABASE_URL="postgres://user:password@localhost:5432/rollbackkit_test"
 ```
+
+The demo runtime and database scripts require `ROLLBACKKIT_DEMO_DATABASE_URL`. They intentionally do not fall back to a generic `DATABASE_URL`, because `db:migrate`, `db:seed` and `db:reset` can change demo data.
 
 Prepare the demo database:
 
@@ -56,6 +60,8 @@ pnpm --filter @rollbackkit/demo-next db:reset
 ## Database
 
 The demo app uses PostgreSQL for product data.
+
+Use a disposable local database for this fixture app. Do not point `ROLLBACKKIT_DEMO_DATABASE_URL` at production or shared application data.
 
 Demo domain tables:
 
