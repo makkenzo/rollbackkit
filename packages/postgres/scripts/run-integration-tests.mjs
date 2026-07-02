@@ -16,6 +16,19 @@ if (existsSync(envFilePath)) {
     Object.assign(env, parseEnvFile(readFileSync(envFilePath, 'utf8')));
 }
 
+if (
+    env.ROLLBACKKIT_POSTGRES_TEST_DATABASE_URL === undefined ||
+    env.ROLLBACKKIT_POSTGRES_TEST_DATABASE_URL.trim() === ''
+) {
+    console.error(
+        [
+            'ROLLBACKKIT_POSTGRES_TEST_DATABASE_URL is required for PostgreSQL integration tests.',
+            `Set it in the environment or create ${envFilePath}.`,
+        ].join('\n'),
+    );
+    process.exit(1);
+}
+
 const result = spawnSync(process.execPath, [vitestPath, 'run', 'test/integration'], {
     cwd: packageDirectory,
     env,

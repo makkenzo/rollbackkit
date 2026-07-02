@@ -10,7 +10,11 @@ import { Client } from 'pg';
 import { describe, expect, it } from 'vitest';
 
 import { createPostgresMigrationRunner } from '../../src/migration-runner';
-import { initialSchemaMigration } from '../../src/migrations';
+import {
+    actionRunIdempotencyMigration,
+    auditInvariantsMigration,
+    initialSchemaMigration,
+} from '../../src/migrations';
 import { createPostgresStore } from '../../src/store';
 
 const DATABASE_URL = process.env.ROLLBACKKIT_POSTGRES_TEST_DATABASE_URL;
@@ -43,6 +47,7 @@ describeIntegration('PostgreSQL integration', () => {
                 '0001_initial_schema',
                 '0002_action_run_idempotency',
                 '0003_audit_invariants',
+                '0004_validate_audit_invariants',
             ]);
             expect(firstResult.skipped).toEqual([]);
 
@@ -53,6 +58,7 @@ describeIntegration('PostgreSQL integration', () => {
                 '0001_initial_schema',
                 '0002_action_run_idempotency',
                 '0003_audit_invariants',
+                '0004_validate_audit_invariants',
             ]);
 
             const tables = await context.client.query<{ readonly table_name: string }>(
@@ -92,9 +98,12 @@ ORDER BY indexname ASC
                 'rollbackkit_action_runs_tenant_idempotency_idx',
             ]);
 
-            const constraints = await context.client.query<{ readonly conname: string }>(
+            const constraints = await context.client.query<{
+                readonly conname: string;
+                readonly convalidated: boolean;
+            }>(
                 `
-SELECT conname
+SELECT conname, convalidated
 FROM pg_constraint
 WHERE connamespace = $1::regnamespace
     AND conname IN (
@@ -108,11 +117,23 @@ ORDER BY conname ASC
                 [context.schemaName],
             );
 
-            expect(constraints.rows.map((row) => row.conname)).toEqual([
-                'rollbackkit_action_runs_actor_consistency_check',
-                'rollbackkit_action_runs_status_check',
-                'rollbackkit_action_runs_target_consistency_check',
-                'rollbackkit_side_effects_status_check',
+            expect(constraints.rows).toEqual([
+                {
+                    conname: 'rollbackkit_action_runs_actor_consistency_check',
+                    convalidated: true,
+                },
+                {
+                    conname: 'rollbackkit_action_runs_status_check',
+                    convalidated: true,
+                },
+                {
+                    conname: 'rollbackkit_action_runs_target_consistency_check',
+                    convalidated: true,
+                },
+                {
+                    conname: 'rollbackkit_side_effects_status_check',
+                    convalidated: true,
+                },
             ]);
         } finally {
             await context.cleanup();
@@ -142,6 +163,7 @@ ORDER BY conname ASC
             expect(statusBefore.pending.map((migration) => migration.id)).toEqual([
                 '0002_action_run_idempotency',
                 '0003_audit_invariants',
+                '0004_validate_audit_invariants',
             ]);
 
             const result = await runner.migrate();
@@ -149,6 +171,7 @@ ORDER BY conname ASC
             expect(result.applied.map((migration) => migration.id)).toEqual([
                 '0002_action_run_idempotency',
                 '0003_audit_invariants',
+                '0004_validate_audit_invariants',
             ]);
             expect(result.skipped.map((migration) => migration.id)).toEqual([
                 '0001_initial_schema',
@@ -161,6 +184,88 @@ ORDER BY conname ASC
                 '0001_initial_schema',
                 '0002_action_run_idempotency',
                 '0003_audit_invariants',
+                '0004_validate_audit_invariants',
+            ]);
+        } finally {
+            await context.cleanup();
+        }
+    });
+
+    it('validates audit constraints when upgrading from a database already at 0003', async () => {
+        const context = await createPostgresTestContext();
+
+        try {
+            const bootstrapRunner = createPostgresMigrationRunner({
+                executor: context.client,
+                migrations: [
+                    initialSchemaMigration,
+                    actionRunIdempotencyMigration,
+                    auditInvariantsMigration,
+                ],
+            });
+
+            await bootstrapRunner.migrate();
+
+            await expect(readAuditConstraintValidation(context.client)).resolves.toEqual([
+                {
+                    conname: 'rollbackkit_action_runs_actor_consistency_check',
+                    convalidated: false,
+                },
+                {
+                    conname: 'rollbackkit_action_runs_status_check',
+                    convalidated: false,
+                },
+                {
+                    conname: 'rollbackkit_action_runs_target_consistency_check',
+                    convalidated: false,
+                },
+                {
+                    conname: 'rollbackkit_side_effects_status_check',
+                    convalidated: false,
+                },
+            ]);
+
+            const runner = createPostgresMigrationRunner({
+                executor: context.client,
+            });
+            const statusBefore = await runner.getMigrationStatus();
+
+            expect(statusBefore.skipped.map((migration) => migration.id)).toEqual([
+                '0001_initial_schema',
+                '0002_action_run_idempotency',
+                '0003_audit_invariants',
+            ]);
+            expect(statusBefore.pending.map((migration) => migration.id)).toEqual([
+                '0004_validate_audit_invariants',
+            ]);
+
+            const result = await runner.migrate();
+
+            expect(result.applied.map((migration) => migration.id)).toEqual([
+                '0004_validate_audit_invariants',
+            ]);
+            expect(result.skipped.map((migration) => migration.id)).toEqual([
+                '0001_initial_schema',
+                '0002_action_run_idempotency',
+                '0003_audit_invariants',
+            ]);
+            await expect(readAuditConstraintValidation(context.client)).resolves.toEqual([
+                {
+                    conname: 'rollbackkit_action_runs_actor_consistency_check',
+                    convalidated: true,
+                },
+                {
+                    conname: 'rollbackkit_action_runs_status_check',
+                    convalidated: true,
+                },
+                {
+                    conname: 'rollbackkit_action_runs_target_consistency_check',
+                    convalidated: true,
+                },
+                {
+                    conname: 'rollbackkit_side_effects_status_check',
+                    convalidated: true,
+                },
             ]);
         } finally {
             await context.cleanup();
@@ -181,11 +286,11 @@ ORDER BY conname ASC
 
             const results = await Promise.all([firstRunner.migrate(), secondRunner.migrate()]);
 
-            expect(results.filter((result) => result.applied.length === 3)).toHaveLength(1);
+            expect(results.filter((result) => result.applied.length === 4)).toHaveLength(1);
             expect(results.filter((result) => result.applied.length === 0)).toHaveLength(1);
             expect(
                 results.every(
-                    (result) => result.applied.length === 3 || result.skipped.length === 3,
+                    (result) => result.applied.length === 4 || result.skipped.length === 4,
                 ),
             ).toBe(true);
 
@@ -212,6 +317,10 @@ ORDER BY id ASC
                 },
                 {
                     id: '0003_audit_invariants',
+                    migration_count: 1,
+                },
+                {
+                    id: '0004_validate_audit_invariants',
                     migration_count: 1,
                 },
             ]);
@@ -673,6 +782,33 @@ async function createPostgresTestClient(schemaName: string): Promise<Client> {
     await client.query(`SET search_path TO ${quoteIdentifier(schemaName)}`);
 
     return client;
+}
+
+async function readAuditConstraintValidation(client: Client): Promise<
+    readonly {
+        readonly conname: string;
+        readonly convalidated: boolean;
+    }[]
+> {
+    const result = await client.query<{
+        readonly conname: string;
+        readonly convalidated: boolean;
+    }>(
+        `
+SELECT conname, convalidated
+FROM pg_constraint
+WHERE connamespace = current_schema()::regnamespace
+    AND conname IN (
+        'rollbackkit_action_runs_actor_consistency_check',
+        'rollbackkit_action_runs_status_check',
+        'rollbackkit_action_runs_target_consistency_check',
+        'rollbackkit_side_effects_status_check'
+    )
+ORDER BY conname ASC
+`,
+    );
+
+    return result.rows;
 }
 
 function getPostgresTestDatabaseUrl(): string {

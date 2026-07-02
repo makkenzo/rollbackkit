@@ -61,6 +61,27 @@ describe('@rollbackkit/postgres', () => {
         expect(migration?.sql).toContain("actor ->> 'id' = actor_id");
         expect(migration?.sql).toContain('rollbackkit_action_runs_target_consistency_check');
         expect(migration?.sql).toContain('rollbackkit_side_effects_status_check');
+        expect(migration?.sql).not.toContain('VALIDATE CONSTRAINT');
+    });
+
+    it('exports audit invariant validation migration', () => {
+        const migration = ROLLBACKKIT_POSTGRES_MIGRATIONS.find(
+            (candidate) => candidate.id === '0004_validate_audit_invariants',
+        );
+
+        expect(migration).toBeDefined();
+        expect(migration?.sql).toContain(
+            'VALIDATE CONSTRAINT rollbackkit_action_runs_status_check',
+        );
+        expect(migration?.sql).toContain(
+            'VALIDATE CONSTRAINT rollbackkit_action_runs_actor_consistency_check',
+        );
+        expect(migration?.sql).toContain(
+            'VALIDATE CONSTRAINT rollbackkit_action_runs_target_consistency_check',
+        );
+        expect(migration?.sql).toContain(
+            'VALIDATE CONSTRAINT rollbackkit_side_effects_status_check',
+        );
     });
 
     it('applies pending migrations and records them', async () => {
@@ -73,6 +94,7 @@ describe('@rollbackkit/postgres', () => {
             '0001_initial_schema',
             '0002_action_run_idempotency',
             '0003_audit_invariants',
+            '0004_validate_audit_invariants',
         ]);
         expect(result.skipped).toEqual([]);
 
@@ -108,6 +130,7 @@ describe('@rollbackkit/postgres', () => {
             '0001_initial_schema',
             '0002_action_run_idempotency',
             '0003_audit_invariants',
+            '0004_validate_audit_invariants',
         ]);
         expect(
             executor.queries.some((query) =>
@@ -140,6 +163,7 @@ describe('@rollbackkit/postgres', () => {
         expect(status.pending.map((migration) => migration.id)).toEqual([
             '0002_action_run_idempotency',
             '0003_audit_invariants',
+            '0004_validate_audit_invariants',
         ]);
         expect(
             executor.queries.some(
@@ -170,6 +194,7 @@ describe('@rollbackkit/postgres', () => {
         expect(result.applied.map((migration) => migration.id)).toEqual([
             '0002_action_run_idempotency',
             '0003_audit_invariants',
+            '0004_validate_audit_invariants',
         ]);
         expect(result.skipped.map((migration) => migration.id)).toEqual(['0001_initial_schema']);
         expect(executor.schemaMigrationRows).toEqual([
@@ -188,12 +213,61 @@ describe('@rollbackkit/postgres', () => {
                 checksum: createMigrationChecksum('0003_audit_invariants'),
                 applied_at: new Date('2026-01-01T00:00:00.000Z'),
             },
+            {
+                id: '0004_validate_audit_invariants',
+                checksum: createMigrationChecksum('0004_validate_audit_invariants'),
+                applied_at: new Date('2026-01-01T00:00:00.000Z'),
+            },
         ]);
         expect(
             executor.queries.some((query) =>
                 query.text.includes('UPDATE rollbackkit_schema_migrations'),
             ),
         ).toBe(true);
+        expect(
+            executor.queries.some(
+                (query) =>
+                    query.text.includes('ALTER TABLE rollbackkit_schema_migrations') &&
+                    query.text.includes('ALTER COLUMN checksum SET NOT NULL'),
+            ),
+        ).toBe(true);
+    });
+
+    it('applies validation migration after audit invariants were already applied', async () => {
+        const executor = new FakePostgresExecutor(
+            [
+                createAppliedMigrationRow('0001_initial_schema', '2026-01-01T00:00:00.000Z'),
+                createAppliedMigrationRow(
+                    '0002_action_run_idempotency',
+                    '2026-01-01T00:00:01.000Z',
+                ),
+                createAppliedMigrationRow(
+                    '0003_audit_invariants',
+                    '2026-01-01T00:00:02.000Z',
+                    PRE_VALIDATION_AUDIT_INVARIANTS_CHECKSUM,
+                ),
+            ],
+            {
+                schemaMigrationsTableExists: true,
+            },
+        );
+
+        const runner = createPostgresMigrationRunner({ executor });
+
+        const result = await runner.migrate();
+
+        expect(result.applied.map((migration) => migration.id)).toEqual([
+            '0004_validate_audit_invariants',
+        ]);
+        expect(result.skipped.map((migration) => migration.id)).toEqual([
+            '0001_initial_schema',
+            '0002_action_run_idempotency',
+            '0003_audit_invariants',
+        ]);
+        expect(executor.schemaMigrationRows.at(-1)).toMatchObject({
+            id: '0004_validate_audit_invariants',
+            checksum: createMigrationChecksum('0004_validate_audit_invariants'),
+        });
     });
 
     it('rechecks pending migrations after acquiring the migration lock', async () => {
@@ -228,6 +302,7 @@ describe('@rollbackkit/postgres', () => {
             '0001_initial_schema',
             '0002_action_run_idempotency',
             '0003_audit_invariants',
+            '0004_validate_audit_invariants',
         ]);
         expect(
             executor.queries.some((query) =>
@@ -248,6 +323,10 @@ describe('@rollbackkit/postgres', () => {
                 '0003_audit_invariants',
                 new Date('2026-01-01T00:00:02.000Z'),
             ),
+            createAppliedMigrationRow(
+                '0004_validate_audit_invariants',
+                new Date('2026-01-01T00:00:03.000Z'),
+            ),
         ]);
 
         const runner = createPostgresMigrationRunner({ executor });
@@ -259,6 +338,7 @@ describe('@rollbackkit/postgres', () => {
             '0001_initial_schema',
             '0002_action_run_idempotency',
             '0003_audit_invariants',
+            '0004_validate_audit_invariants',
         ]);
         expect(executor.queries.some((query) => query.text === 'BEGIN')).toBe(false);
     });
@@ -358,6 +438,7 @@ describe('@rollbackkit/postgres', () => {
 function createAppliedMigrationRow(
     id: string,
     appliedAt: Date | string,
+    checksum = createMigrationChecksum(id),
 ): {
     readonly id: string;
     readonly checksum: string;
@@ -365,10 +446,13 @@ function createAppliedMigrationRow(
 } {
     return {
         id,
-        checksum: createMigrationChecksum(id),
+        checksum,
         applied_at: appliedAt,
     };
 }
+
+const PRE_VALIDATION_AUDIT_INVARIANTS_CHECKSUM =
+    'sha256:ca67e59be794234e3c0cb43c1c9e680cb678bbb29375179f37735d1217559abc';
 
 function createMigrationChecksum(id: string): string {
     const migration = ROLLBACKKIT_POSTGRES_MIGRATIONS.find((candidate) => candidate.id === id);

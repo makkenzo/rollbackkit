@@ -17,6 +17,11 @@ ALTER TABLE rollbackkit_schema_migrations
     ADD COLUMN IF NOT EXISTS checksum text;
 `;
 
+const SCHEMA_MIGRATIONS_CHECKSUM_NOT_NULL_SQL = `
+ALTER TABLE rollbackkit_schema_migrations
+    ALTER COLUMN checksum SET NOT NULL;
+`;
+
 const ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_CLASS_ID = 1_763_074_182;
 const ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_SQL = `
 SELECT pg_advisory_lock(
@@ -233,6 +238,8 @@ WHERE id = $1
                 [migration.id, createMigrationChecksum(migration)],
             );
         }
+
+        await this.#executor.query(SCHEMA_MIGRATIONS_CHECKSUM_NOT_NULL_SQL);
     }
 
     async #readSchemaMigrationsTableExists(): Promise<boolean> {
