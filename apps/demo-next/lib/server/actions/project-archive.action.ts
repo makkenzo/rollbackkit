@@ -10,7 +10,6 @@ import {
     restoreDemoProject,
 } from '../repositories/project-repository';
 import { assertDemoWorkspaceScope } from './demo-action-scope';
-import { recordDemoUndoConflict } from './undo-conflict';
 
 export const PROJECT_ARCHIVE_ACTION_NAME = 'project.archive';
 
@@ -147,7 +146,7 @@ export function createProjectArchiveAction(executor: PostgresQueryExecutor) {
             if (currentProject === null) {
                 const reason = 'Project no longer exists, so undo would be unsafe.';
 
-                await recordDemoUndoConflict(context.conflicts, reason, {
+                await context.conflicts.record(reason, {
                     expectedState: 'Project exists and is Archived',
                     actualState: 'Project no longer exists',
                     suggestedNextStep: 'Review the current project status before retrying undo.',
@@ -159,7 +158,7 @@ export function createProjectArchiveAction(executor: PostgresQueryExecutor) {
             if (currentProject.status !== 'archived') {
                 const reason = 'Project is no longer archived, so undo would be unsafe.';
 
-                await recordDemoUndoConflict(context.conflicts, reason, {
+                await context.conflicts.record(reason, {
                     expectedState: 'Project status is Archived',
                     actualState: `Project status is ${formatProjectStatusLabel(currentProject.status)}`,
                     suggestedNextStep: 'Review the current project status before retrying undo.',

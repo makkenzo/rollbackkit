@@ -1,21 +1,33 @@
 'use server';
 
+import { MEMBER_REMOVE_ACTION_NAME } from '@/lib/server/actions/member-remove.action';
+import { executeDemoAction, previewDemoAction } from '@/lib/server/demo-action-service';
 import { getDemoRequestContext } from '@/lib/server/demo-request-context';
-import {
-    executeMemberRemove as executeMemberRemoveService,
-    previewMemberRemove as previewMemberRemoveService,
-} from '@/lib/server/member-remove-service';
 import { revalidateDemoHome } from './revalidation';
 
 export async function previewMemberRemove(memberId: string) {
-    return previewMemberRemoveService(memberId, getDemoRequestContext());
+    const context = getDemoRequestContext();
+
+    return previewDemoAction(
+        MEMBER_REMOVE_ACTION_NAME,
+        {
+            workspaceId: context.workspaceId,
+            memberId,
+        },
+        context,
+    );
 }
 
 export async function executeMemberRemove(memberId: string, idempotencyKey: string) {
-    const response = await executeMemberRemoveService(
-        memberId,
+    const context = getDemoRequestContext();
+    const response = await executeDemoAction(
+        MEMBER_REMOVE_ACTION_NAME,
+        {
+            workspaceId: context.workspaceId,
+            memberId,
+        },
         idempotencyKey,
-        getDemoRequestContext(),
+        context,
     );
 
     if (response.ok) {

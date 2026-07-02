@@ -26,7 +26,6 @@ import {
     restoreDemoProjectOwnerLinks,
 } from '../repositories/ownership-repository';
 import { assertDemoWorkspaceScope } from './demo-action-scope';
-import { recordDemoUndoConflict } from './undo-conflict';
 
 export const MEMBER_REMOVE_ACTION_NAME = 'member.remove';
 
@@ -546,7 +545,7 @@ async function throwMemberRemoveUndoConflict(
     expectedState: string,
     actualState: string,
 ): Promise<never> {
-    await recordDemoUndoConflict(conflicts, reason, {
+    await conflicts.record(reason, {
         expectedState,
         actualState,
         suggestedNextStep: 'Review the current workspace membership before retrying undo.',

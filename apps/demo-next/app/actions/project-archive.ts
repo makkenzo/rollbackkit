@@ -1,21 +1,33 @@
 'use server';
 
+import { PROJECT_ARCHIVE_ACTION_NAME } from '@/lib/server/actions/project-archive.action';
+import { executeDemoAction, previewDemoAction } from '@/lib/server/demo-action-service';
 import { getDemoRequestContext } from '@/lib/server/demo-request-context';
-import {
-    executeProjectArchive as executeProjectArchiveService,
-    previewProjectArchive as previewProjectArchiveService,
-} from '@/lib/server/project-archive-service';
 import { revalidateDemoHome } from './revalidation';
 
 export async function previewProjectArchive(projectId: string) {
-    return previewProjectArchiveService(projectId, getDemoRequestContext());
+    const context = getDemoRequestContext();
+
+    return previewDemoAction(
+        PROJECT_ARCHIVE_ACTION_NAME,
+        {
+            workspaceId: context.workspaceId,
+            projectId,
+        },
+        context,
+    );
 }
 
 export async function executeProjectArchive(projectId: string, idempotencyKey: string) {
-    const response = await executeProjectArchiveService(
-        projectId,
+    const context = getDemoRequestContext();
+    const response = await executeDemoAction(
+        PROJECT_ARCHIVE_ACTION_NAME,
+        {
+            workspaceId: context.workspaceId,
+            projectId,
+        },
         idempotencyKey,
-        getDemoRequestContext(),
+        context,
     );
 
     if (response.ok) {

@@ -1,16 +1,24 @@
 'use server';
 
+import { MEMBER_CHANGE_ROLE_ACTION_NAME } from '@/lib/server/actions/member-change-role.action';
+import { executeDemoAction, previewDemoAction } from '@/lib/server/demo-action-service';
 import { getDemoRequestContext } from '@/lib/server/demo-request-context';
-import {
-    executeMemberRoleChange as executeMemberRoleChangeService,
-    previewMemberRoleChange as previewMemberRoleChangeService,
-} from '@/lib/server/member-change-role-service';
 import { revalidateDemoHome } from './revalidation';
 
 type EditableMemberRole = 'admin' | 'viewer';
 
 export async function previewMemberRoleChange(memberId: string, role: EditableMemberRole) {
-    return previewMemberRoleChangeService(memberId, role, getDemoRequestContext());
+    const context = getDemoRequestContext();
+
+    return previewDemoAction(
+        MEMBER_CHANGE_ROLE_ACTION_NAME,
+        {
+            workspaceId: context.workspaceId,
+            memberId,
+            role,
+        },
+        context,
+    );
 }
 
 export async function executeMemberRoleChange(
@@ -18,11 +26,16 @@ export async function executeMemberRoleChange(
     role: EditableMemberRole,
     idempotencyKey: string,
 ) {
-    const response = await executeMemberRoleChangeService(
-        memberId,
-        role,
+    const context = getDemoRequestContext();
+    const response = await executeDemoAction(
+        MEMBER_CHANGE_ROLE_ACTION_NAME,
+        {
+            workspaceId: context.workspaceId,
+            memberId,
+            role,
+        },
         idempotencyKey,
-        getDemoRequestContext(),
+        context,
     );
 
     if (response.ok) {
