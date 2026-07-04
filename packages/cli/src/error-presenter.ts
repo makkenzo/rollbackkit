@@ -4,6 +4,7 @@ import type { CliWriter } from './output';
 import { writeLine } from './output';
 
 const DATABASE_URL_CREDENTIAL_PATTERN = /\b(postgres(?:ql)?:\/\/)([^:@/\s]+):([^@/\s]+)@/g;
+const MAX_CAUSE_DEPTH = 32;
 
 export interface CliErrorPresentationOptions {
     readonly verbose?: boolean;
@@ -54,14 +55,33 @@ function writeVerboseDetails(
 }
 
 function writeCauseChain(writer: CliWriter, cause: unknown): void {
-    if (cause === undefined) {
-        return;
-    }
+    const seen = new Set<Error>();
+    let currentCause = cause;
+    let depth = 0;
 
-    writeLine(writer, redactDatabaseUrlCredentials(`Caused by: ${formatCause(cause)}`));
+    while (currentCause !== undefined) {
+        if (depth >= MAX_CAUSE_DEPTH) {
+            writeLine(writer, `Cause chain truncated after ${MAX_CAUSE_DEPTH} cause(s).`);
+            return;
+        }
 
-    if (cause instanceof Error) {
-        writeCauseChain(writer, cause.cause);
+        if (currentCause instanceof Error) {
+            if (seen.has(currentCause)) {
+                writeLine(writer, 'Cause chain stopped after detecting a cycle.');
+                return;
+            }
+
+            seen.add(currentCause);
+        }
+
+        writeLine(writer, redactDatabaseUrlCredentials(`Caused by: ${formatCause(currentCause)}`));
+        depth += 1;
+
+        if (!(currentCause instanceof Error)) {
+            return;
+        }
+
+        currentCause = currentCause.cause;
     }
 }
 

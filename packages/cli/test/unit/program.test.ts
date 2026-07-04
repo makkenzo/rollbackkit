@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type { PostgresMigrationResult, PostgresMigrationStatus } from '@rollbackkit/postgres';
-import { describe, expect, it } from 'vitest';
+import { CommanderError } from 'commander';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
     type CliWriter,
@@ -292,6 +293,32 @@ describe('@rollbackkit/cli', () => {
         );
     });
 
+    it('makes exported programs reject parser exits instead of terminating the process', async () => {
+        const stdout = new MemoryWriter();
+        const stderr = new MemoryWriter();
+        const exit = vi.spyOn(process, 'exit').mockImplementation((code) => {
+            throw new Error(`process.exit called with ${String(code)}`);
+        });
+
+        try {
+            const program = createRollbackKitCliProgram({
+                stdout,
+                stderr,
+                env: {},
+            });
+
+            await expect(
+                program.parseAsync(['node', 'rollbackkit', 'unknown-command'], {
+                    from: 'node',
+                }),
+            ).rejects.toBeInstanceOf(CommanderError);
+
+            expect(exit).not.toHaveBeenCalled();
+        } finally {
+            exit.mockRestore();
+        }
+    });
+
     it('writes top-level errors to injected stderr and returns a non-zero exit code', async () => {
         const stdout = new MemoryWriter();
         const stderr = new MemoryWriter();
@@ -359,6 +386,73 @@ describe('@rollbackkit/cli', () => {
         expect(stderr.output).toContain('migration failed');
         expect(stderr.output).toContain('Caused by: Error: connection failed');
         expect(stderr.output).toContain('Caused by: Error: socket closed');
+    });
+
+    it('stops verbose cause rendering when an error cause cycle is detected', async () => {
+        const stdout = new MemoryWriter();
+        const stderr = new MemoryWriter();
+        const cyclicCause = new Error('connection failed') as Error & {
+            cause?: unknown;
+        };
+        cyclicCause.cause = cyclicCause;
+
+        const exitCode = await runCli({
+            argv: [
+                'node',
+                'rollbackkit',
+                '--verbose',
+                'migrate',
+                '--database-url',
+                'postgres://test',
+            ],
+            stdout,
+            stderr,
+            env: {},
+            migratePostgresDatabase: async () => {
+                throw new Error('migration failed', {
+                    cause: cyclicCause,
+                });
+            },
+        });
+
+        expect(exitCode).toBe(1);
+        expect(countOccurrences(stderr.output, 'Caused by: Error: connection failed')).toBe(1);
+    });
+
+    it('stops verbose cause rendering after a bounded depth', async () => {
+        const stdout = new MemoryWriter();
+        const stderr = new MemoryWriter();
+        let cause: Error = new Error('cause 40');
+
+        for (let index = 39; index >= 1; index -= 1) {
+            cause = new Error(`cause ${index}`, {
+                cause,
+            });
+        }
+
+        const exitCode = await runCli({
+            argv: [
+                'node',
+                'rollbackkit',
+                '--verbose',
+                'migrate',
+                '--database-url',
+                'postgres://test',
+            ],
+            stdout,
+            stderr,
+            env: {},
+            migratePostgresDatabase: async () => {
+                throw new Error('migration failed', {
+                    cause,
+                });
+            },
+        });
+
+        expect(exitCode).toBe(1);
+        expect(stderr.output).toContain('Caused by: Error: cause 1');
+        expect(stderr.output).toContain('Cause chain truncated after');
+        expect(stderr.output).not.toContain('Caused by: Error: cause 40');
     });
 
     it('redacts database URL credentials in normal error output', async () => {

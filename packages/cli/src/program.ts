@@ -52,6 +52,8 @@ export function createRollbackKitCliProgram(options: RollbackKitCliProgramOption
 
     const program = new Command();
 
+    program.exitOverride();
+
     program.configureOutput({
         writeOut: (text) => {
             stdout.write(text);
@@ -145,8 +147,6 @@ export function createRollbackKitCliProgram(options: RollbackKitCliProgramOption
 export async function runCli(options: RunCliOptions = {}): Promise<number> {
     const stderr = options.stderr ?? process.stderr;
     const program = createRollbackKitCliProgram(options);
-
-    program.exitOverride();
 
     try {
         await program.parseAsync([...(options.argv ?? process.argv)], {
