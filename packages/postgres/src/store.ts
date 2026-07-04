@@ -2,6 +2,7 @@ import {
     type ActionConflict,
     type ActionHistoryQuery,
     type ActionRun,
+    type ActionRunRecordQuery,
     type ActionSideEffect,
     type ClaimActionRunInput,
     type ClaimActionRunResult,
@@ -38,6 +39,8 @@ import {
     SIDE_EFFECT_COLUMNS_SQL,
     SNAPSHOT_COLUMNS_SQL,
 } from './sql-columns';
+
+const MAX_IDEMPOTENCY_KEY_BYTES = 255;
 
 export interface PostgresStoreOptions {
     /**
@@ -91,6 +94,10 @@ export class PostgresStore implements StorageAdapter {
     async createActionRun<TInput extends JsonValue = JsonValue>(
         input: CreateActionRunInput<TInput>,
     ): Promise<ActionRun<TInput>> {
+        if (input.idempotencyKey !== undefined) {
+            assertIdempotencyKeyForStorage(input.idempotencyKey);
+        }
+
         const row = await this.#insertActionRun(input);
 
         if (row === undefined) {
@@ -109,6 +116,8 @@ export class PostgresStore implements StorageAdapter {
     async claimActionRun<TInput extends JsonValue = JsonValue>(
         input: ClaimActionRunInput<TInput>,
     ): Promise<ClaimActionRunResult<TInput>> {
+        assertIdempotencyKeyForStorage(input.idempotencyKey);
+
         const row = await this.#insertActionRun(input, createIdempotencyConflictSql(input));
 
         if (row !== undefined) {
@@ -415,15 +424,30 @@ RETURNING ${SIDE_EFFECT_COLUMNS_SQL}
         return mapActionSideEffectRow(row) as ActionSideEffect<TPayload>;
     }
 
-    async getSideEffects(actionRunId: string): Promise<readonly ActionSideEffect[]> {
+    async getSideEffects(query: ActionRunRecordQuery): Promise<readonly ActionSideEffect[]> {
+        assertActionRunRecordQueryIsScoped(query);
+        const scope = createActionRunRecordScopeSql(query);
+
         const result = await this.#executor.query<ActionSideEffectRow>(
             `
-SELECT ${SIDE_EFFECT_COLUMNS_SQL}
+SELECT
+    rollbackkit_side_effects.id,
+    rollbackkit_side_effects.action_run_id,
+    rollbackkit_side_effects.type,
+    rollbackkit_side_effects.status,
+    rollbackkit_side_effects.reversibility,
+    rollbackkit_side_effects.payload,
+    rollbackkit_side_effects.payload IS NOT NULL AS payload_present,
+    rollbackkit_side_effects.created_at,
+    rollbackkit_side_effects.metadata
 FROM rollbackkit_side_effects
-WHERE action_run_id = $1
-ORDER BY created_at ASC, id ASC
+INNER JOIN rollbackkit_action_runs
+    ON rollbackkit_action_runs.id = rollbackkit_side_effects.action_run_id
+WHERE rollbackkit_side_effects.action_run_id = $1
+${scope.sql}
+ORDER BY rollbackkit_side_effects.created_at ASC, rollbackkit_side_effects.id ASC
 `,
-            [actionRunId],
+            [query.actionRunId, ...scope.values],
         );
 
         return result.rows.map(mapActionSideEffectRow);
@@ -471,15 +495,26 @@ RETURNING ${CONFLICT_COLUMNS_SQL}
         return mapActionConflictRow(row);
     }
 
-    async getConflicts(actionRunId: string): Promise<readonly ActionConflict[]> {
+    async getConflicts(query: ActionRunRecordQuery): Promise<readonly ActionConflict[]> {
+        assertActionRunRecordQueryIsScoped(query);
+        const scope = createActionRunRecordScopeSql(query);
+
         const result = await this.#executor.query<ActionConflictRow>(
             `
-SELECT ${CONFLICT_COLUMNS_SQL}
+SELECT
+    rollbackkit_conflicts.id,
+    rollbackkit_conflicts.action_run_id,
+    rollbackkit_conflicts.reason,
+    rollbackkit_conflicts.details,
+    rollbackkit_conflicts.created_at
 FROM rollbackkit_conflicts
-WHERE action_run_id = $1
-ORDER BY created_at ASC, id ASC
+INNER JOIN rollbackkit_action_runs
+    ON rollbackkit_action_runs.id = rollbackkit_conflicts.action_run_id
+WHERE rollbackkit_conflicts.action_run_id = $1
+${scope.sql}
+ORDER BY rollbackkit_conflicts.created_at ASC, rollbackkit_conflicts.id ASC
 `,
-            [actionRunId],
+            [query.actionRunId, ...scope.values],
         );
 
         return result.rows.map(mapActionConflictRow);
@@ -641,6 +676,73 @@ ON CONFLICT (tenant_id, name, actor_type, actor_id, idempotency_key)
 WHERE idempotency_key IS NOT NULL AND tenant_id IS NOT NULL
 DO NOTHING
 `;
+}
+
+function assertActionRunRecordQueryIsScoped(query: ActionRunRecordQuery): void {
+    if (query.tenantId !== undefined) {
+        return;
+    }
+
+    if (query.actorId !== undefined && query.actorType !== undefined) {
+        return;
+    }
+
+    throw new RollbackKitError({
+        code: 'ACTION_PERMISSION_DENIED',
+        message:
+            'Action run related records require a tenant or actor scope before they can be read.',
+        details: {
+            actionRunId: query.actionRunId,
+        },
+    });
+}
+
+function assertIdempotencyKeyForStorage(idempotencyKey: string): void {
+    const sizeBytes = Buffer.byteLength(idempotencyKey, 'utf8');
+
+    if (sizeBytes <= MAX_IDEMPOTENCY_KEY_BYTES) {
+        return;
+    }
+
+    throw new RollbackKitError({
+        code: 'ACTION_INPUT_INVALID',
+        message: `Idempotency key must be ${MAX_IDEMPOTENCY_KEY_BYTES} bytes or less.`,
+        details: {
+            field: 'idempotencyKey',
+            maxBytes: MAX_IDEMPOTENCY_KEY_BYTES,
+            actualBytes: sizeBytes,
+        },
+    });
+}
+
+function createActionRunRecordScopeSql(query: ActionRunRecordQuery): {
+    readonly sql: string;
+    readonly values: readonly unknown[];
+} {
+    const conditions: string[] = [];
+    const values: unknown[] = [];
+
+    const addCondition = (condition: string, value: unknown) => {
+        values.push(value);
+        conditions.push(`${condition} $${values.length + 1}`);
+    };
+
+    if (query.tenantId !== undefined) {
+        addCondition('AND rollbackkit_action_runs.tenant_id =', query.tenantId);
+    }
+
+    if (query.actorId !== undefined) {
+        addCondition('AND rollbackkit_action_runs.actor_id =', query.actorId);
+    }
+
+    if (query.actorType !== undefined) {
+        addCondition('AND rollbackkit_action_runs.actor_type =', query.actorType);
+    }
+
+    return {
+        sql: conditions.length === 0 ? '' : conditions.join('\n'),
+        values,
+    };
 }
 
 function actionRunMatchesHistoryQuery(run: ActionRun, query: ActionHistoryQuery): boolean {

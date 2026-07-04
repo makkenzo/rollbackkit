@@ -208,6 +208,38 @@ describe('PostgresStore action runs', () => {
         expect(insertQuery?.text).toContain('idempotency_key');
     });
 
+    it('rejects oversized idempotency keys before indexing them', async () => {
+        const executor = new FakePostgresExecutor();
+        const store = createPostgresStore({ executor });
+
+        await expect(
+            store.claimActionRun({
+                name: 'project.archive',
+                actor,
+                tenantId: 'tenant_1',
+                target,
+                input: {
+                    projectId: 'project_1',
+                },
+                inputHash: 'fnv1a64:hash_1',
+                idempotencyKey: 'x'.repeat(256),
+                reversibility: REVERSIBILITY.full,
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_INPUT_INVALID',
+            details: {
+                field: 'idempotencyKey',
+                maxBytes: 255,
+            },
+        });
+
+        expect(
+            executor.queries.some((query) =>
+                query.text.includes('INSERT INTO rollbackkit_action_runs'),
+            ),
+        ).toBe(false);
+    });
+
     it('updates action runs', async () => {
         const now = new Date('2026-01-01T00:00:00.000Z');
         const executedAt = new Date('2026-01-01T00:00:01.000Z');
@@ -589,7 +621,13 @@ describe('PostgresStore action runs', () => {
             '{"provider":"test"}',
         ]);
 
-        await expect(store.getSideEffects(run.id)).resolves.toEqual([sideEffect]);
+        await expect(
+            store.getSideEffects({
+                actionRunId: run.id,
+                actorId: actor.id,
+                actorType: actor.type,
+            }),
+        ).resolves.toEqual([sideEffect]);
     });
 
     it('preserves JSON null side effect payload separately from absent metadata', async () => {
@@ -726,7 +764,52 @@ describe('PostgresStore action runs', () => {
             now,
         ]);
 
-        await expect(store.getConflicts(run.id)).resolves.toEqual([conflict]);
+        await expect(
+            store.getConflicts({
+                actionRunId: run.id,
+                actorId: actor.id,
+                actorType: actor.type,
+            }),
+        ).resolves.toEqual([conflict]);
+    });
+
+    it('requires scope when reading conflicts', async () => {
+        const executor = new FakePostgresExecutor();
+
+        const store = createPostgresStore({
+            executor,
+        });
+
+        const run = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        const conflict = await store.recordConflict({
+            actionRunId: run.id,
+            reason: 'Expected project to be archived, but it was deleted.',
+        });
+
+        await expect(store.getConflicts({ actionRunId: run.id })).rejects.toMatchObject({
+            code: 'ACTION_PERMISSION_DENIED',
+        });
+        await expect(
+            store.getConflicts({
+                actionRunId: run.id,
+                tenantId: 'tenant_other',
+            }),
+        ).resolves.toEqual([]);
+        await expect(
+            store.getConflicts({
+                actionRunId: run.id,
+                tenantId: 'tenant_1',
+            }),
+        ).resolves.toEqual([conflict]);
     });
 
     it('records conflicts without optional details', async () => {

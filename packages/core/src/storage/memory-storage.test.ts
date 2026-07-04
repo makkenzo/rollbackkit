@@ -180,8 +180,18 @@ describe('MemoryStorageAdapter', () => {
 
         await expect(storage.getActionRun(run.id)).resolves.toEqual(run);
         await expect(storage.getSnapshots(run.id)).resolves.toEqual([]);
-        await expect(storage.getSideEffects(run.id)).resolves.toEqual([]);
-        await expect(storage.getConflicts(run.id)).resolves.toEqual([]);
+        await expect(
+            storage.getSideEffects({
+                actionRunId: run.id,
+                tenantId: 'tenant_1',
+            }),
+        ).resolves.toEqual([]);
+        await expect(
+            storage.getConflicts({
+                actionRunId: run.id,
+                tenantId: 'tenant_1',
+            }),
+        ).resolves.toEqual([]);
     });
 
     it('does not roll back a concurrent committed transaction', async () => {
@@ -349,8 +359,20 @@ describe('MemoryStorageAdapter', () => {
         expect(conflict.id).toBe('conflict_3');
         expect(conflict.reason).toBe('Expected document to be archived, but it was deleted.');
 
-        await expect(storage.getSideEffects(run.id)).resolves.toEqual([sideEffect]);
-        await expect(storage.getConflicts(run.id)).resolves.toEqual([conflict]);
+        await expect(
+            storage.getSideEffects({
+                actionRunId: run.id,
+                actorId: actor.id,
+                actorType: actor.type,
+            }),
+        ).resolves.toEqual([sideEffect]);
+        await expect(
+            storage.getConflicts({
+                actionRunId: run.id,
+                actorId: actor.id,
+                actorType: actor.type,
+            }),
+        ).resolves.toEqual([conflict]);
     });
 
     it('queries action history', async () => {

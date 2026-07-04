@@ -18,6 +18,7 @@ import type { Snapshot } from '../storage/snapshot';
 import type {
     ActionConflict,
     ActionHistoryQuery,
+    ActionRunRecordQuery,
     ActionSideEffect,
     StorageAdapter,
 } from '../storage/storage';
@@ -25,7 +26,11 @@ import { parseActionInput } from './action-input';
 import { resolveActionTarget } from './action-target';
 import { authorizeAction } from './authorization';
 import { createBaseActionContext, createBaseActionContextFromRun } from './contexts';
-import { assertIdempotentRequestMatches, createActionInputFingerprint } from './idempotency';
+import {
+    assertIdempotencyKeyForStorage,
+    assertIdempotentRequestMatches,
+    createActionInputFingerprint,
+} from './idempotency';
 import { assertJsonObjectForStorage, assertJsonValueForStorage } from './json-assertions';
 import { applyDefaultUndoWindow, createUndoExpiration, mergeMetadata } from './lifecycle-helpers';
 import {
@@ -173,6 +178,11 @@ export class RollbackKit {
         });
 
         const idempotencyKey = request.idempotencyKey;
+
+        if (idempotencyKey !== undefined) {
+            assertIdempotencyKeyForStorage(idempotencyKey);
+        }
+
         const createInput = {
             name: action.name,
             actor: request.actor,
@@ -332,14 +342,15 @@ export class RollbackKit {
             } as const;
 
             const undoneRun = await this.#storage.withTransaction(async () => {
-                const persistedConflicts = await this.#storage.getConflicts(undoRunningRun.id);
+                const recordQuery = createActionRunRecordQuery(undoRunningRun);
+                const persistedConflicts = await this.#storage.getConflicts(recordQuery);
 
                 if (persistedConflicts.length > 0) {
                     throw createPersistedConflictError(undoRunningRun, persistedConflicts.length);
                 }
 
                 const irreversibleSideEffect = (
-                    await this.#storage.getSideEffects(undoRunningRun.id)
+                    await this.#storage.getSideEffects(recordQuery)
                 ).find(
                     (sideEffect) =>
                         sideEffect.status === 'completed' && !isUndoable(sideEffect.reversibility),
@@ -405,12 +416,12 @@ export class RollbackKit {
         return this.#storage.getSnapshots(actionRunId);
     }
 
-    async getSideEffects(actionRunId: string): Promise<readonly ActionSideEffect[]> {
-        return this.#storage.getSideEffects(actionRunId);
+    async getSideEffects(query: ActionRunRecordQuery): Promise<readonly ActionSideEffect[]> {
+        return this.#storage.getSideEffects(query);
     }
 
-    async getConflicts(actionRunId: string): Promise<readonly ActionConflict[]> {
-        return this.#storage.getConflicts(actionRunId);
+    async getConflicts(query: ActionRunRecordQuery): Promise<readonly ActionConflict[]> {
+        return this.#storage.getConflicts(query);
     }
 
     async queryActionRuns(query: ActionHistoryQuery): Promise<readonly ActionRun[]> {
@@ -420,4 +431,13 @@ export class RollbackKit {
 
 export function createRollbackKit(options?: RollbackKitOptions): RollbackKit {
     return new RollbackKit(options);
+}
+
+function createActionRunRecordQuery(run: ActionRun): ActionRunRecordQuery {
+    return {
+        actionRunId: run.id,
+        ...(run.tenantId === undefined ? {} : { tenantId: run.tenantId }),
+        actorId: run.actor.id,
+        actorType: run.actor.type,
+    };
 }

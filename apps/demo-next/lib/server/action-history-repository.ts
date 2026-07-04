@@ -19,7 +19,12 @@ export async function getDemoActionHistory(limit = 8): Promise<readonly DemoActi
         return Promise.all(
             runs.map(async (run) => {
                 const conflicts =
-                    run.status === 'undo_failed' ? await rollbackkit.getConflicts(run.id) : [];
+                    run.status === 'undo_failed'
+                        ? await rollbackkit.getConflicts({
+                              actionRunId: run.id,
+                              tenantId: DEMO_TENANT_ID,
+                          })
+                        : [];
 
                 return mapActionHistoryEntry(run, now, getLatestDemoActionConflict(conflicts));
             }),

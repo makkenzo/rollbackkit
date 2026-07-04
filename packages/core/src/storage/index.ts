@@ -9,6 +9,7 @@ export type {
 export type {
     ActionConflict,
     ActionHistoryQuery,
+    ActionRunRecordQuery,
     ActionSideEffect,
     ClaimActionRunInput,
     ClaimActionRunResult,

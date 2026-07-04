@@ -210,7 +210,10 @@ ORDER BY created_at ASC
             status: 'undo_failed',
         });
 
-        const conflicts = await rollbackkit.getConflicts(run.id);
+        const conflicts = await rollbackkit.getConflicts({
+            actionRunId: run.id,
+            tenantId: 'workspace_action_test',
+        });
 
         expect(conflicts).toHaveLength(1);
         expect(conflicts[0]).toMatchObject({

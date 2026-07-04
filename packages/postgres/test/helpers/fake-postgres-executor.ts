@@ -210,10 +210,17 @@ export class FakePostgresExecutor implements PostgresQueryExecutor {
 
         if (
             text.includes('FROM rollbackkit_side_effects') &&
-            text.includes('WHERE action_run_id = $1')
+            text.includes('WHERE rollbackkit_side_effects.action_run_id = $1')
         ) {
             const actionRunId = String(values?.[0]);
-            const rows = this.sideEffectRows.get(actionRunId) ?? [];
+            const rows = actionRunMatchesRecordScope(
+                this.actionRunRows,
+                actionRunId,
+                text,
+                values ?? [],
+            )
+                ? (this.sideEffectRows.get(actionRunId) ?? [])
+                : [];
 
             return createQueryResult([...rows] as unknown as TResult[]);
         }
@@ -234,10 +241,17 @@ export class FakePostgresExecutor implements PostgresQueryExecutor {
 
         if (
             text.includes('FROM rollbackkit_conflicts') &&
-            text.includes('WHERE action_run_id = $1')
+            text.includes('WHERE rollbackkit_conflicts.action_run_id = $1')
         ) {
             const actionRunId = String(values?.[0]);
-            const rows = this.conflictRows.get(actionRunId) ?? [];
+            const rows = actionRunMatchesRecordScope(
+                this.actionRunRows,
+                actionRunId,
+                text,
+                values ?? [],
+            )
+                ? (this.conflictRows.get(actionRunId) ?? [])
+                : [];
 
             return createQueryResult([...rows] as unknown as TResult[]);
         }
@@ -322,6 +336,45 @@ function findIdempotentActionRun(
             row.tenant_id === scope.tenantId &&
             row.idempotency_key === scope.idempotencyKey,
     );
+}
+
+function actionRunMatchesRecordScope(
+    rows: ReadonlyMap<string, ActionRunRow>,
+    actionRunId: string,
+    text: string,
+    values: readonly unknown[],
+): boolean {
+    const row = rows.get(actionRunId);
+
+    if (row === undefined) {
+        return false;
+    }
+
+    let valueIndex = 1;
+
+    if (text.includes('rollbackkit_action_runs.tenant_id =')) {
+        if (row.tenant_id !== values[valueIndex]) {
+            return false;
+        }
+
+        valueIndex += 1;
+    }
+
+    if (text.includes('rollbackkit_action_runs.actor_id =')) {
+        if (row.actor_id !== values[valueIndex]) {
+            return false;
+        }
+
+        valueIndex += 1;
+    }
+
+    if (text.includes('rollbackkit_action_runs.actor_type =')) {
+        if (row.actor_type !== values[valueIndex]) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 function createActionRunRowFromInsertValues(values: readonly unknown[]): ActionRunRow {

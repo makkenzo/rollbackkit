@@ -7,6 +7,8 @@ const FNV_64_OFFSET = 0xcbf29ce484222325n;
 const FNV_64_PRIME = 0x100000001b3n;
 const FNV_64_MASK = 0xffffffffffffffffn;
 
+export const MAX_IDEMPOTENCY_KEY_BYTES = 255;
+
 export interface ActionInputFingerprint {
     readonly canonicalInput: string;
     readonly inputHash: string;
@@ -19,6 +21,24 @@ export function createActionInputFingerprint(input: JsonValue): ActionInputFinge
         canonicalInput,
         inputHash: `fnv1a64:${createFnv1a64Hash(canonicalInput)}`,
     };
+}
+
+export function assertIdempotencyKeyForStorage(idempotencyKey: string): void {
+    const sizeBytes = Buffer.byteLength(idempotencyKey, 'utf8');
+
+    if (sizeBytes <= MAX_IDEMPOTENCY_KEY_BYTES) {
+        return;
+    }
+
+    throw new RollbackKitError({
+        code: 'ACTION_INPUT_INVALID',
+        message: `Idempotency key must be ${MAX_IDEMPOTENCY_KEY_BYTES} bytes or less.`,
+        details: {
+            field: 'idempotencyKey',
+            maxBytes: MAX_IDEMPOTENCY_KEY_BYTES,
+            actualBytes: sizeBytes,
+        },
+    });
 }
 
 export function assertIdempotentRequestMatches(

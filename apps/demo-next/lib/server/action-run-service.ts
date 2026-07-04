@@ -40,7 +40,12 @@ export async function undoDemoActionRun(
             const conflict =
                 isRollbackKitError(error) && error.code === 'ACTION_PERMISSION_DENIED'
                     ? undefined
-                    : getLatestDemoActionConflict(await rollbackkit.getConflicts(actionRunId));
+                    : getLatestDemoActionConflict(
+                          await rollbackkit.getConflicts({
+                              actionRunId,
+                              tenantId: context.tenantId,
+                          }),
+                      );
 
             return {
                 ok: false,

@@ -4,6 +4,7 @@ import type { SerializedRollbackKitError } from '../errors/rollbackkit-error';
 import { RollbackKitError } from '../errors/rollbackkit-error';
 import type { ActionRun } from '../lifecycle/lifecycle';
 import type { Reversibility } from '../lifecycle/reversibility';
+import { assertIdempotencyKeyForStorage } from '../runtime/idempotency';
 import type { JsonObject, JsonValue } from '../shared/json';
 import type { Clock } from '../shared/time';
 import { systemClock } from '../shared/time';
@@ -11,6 +12,7 @@ import type { CreateSnapshotInput, Snapshot } from './snapshot';
 import type {
     ActionConflict,
     ActionHistoryQuery,
+    ActionRunRecordQuery,
     ActionSideEffect,
     ClaimActionRunInput,
     ClaimActionRunResult,
@@ -88,6 +90,10 @@ export class MemoryStorageAdapter implements StorageAdapter {
         input: CreateActionRunInput<TInput>,
     ): Promise<ActionRun<TInput>> {
         return this.#withWriteAccess(async () => {
+            if (input.idempotencyKey !== undefined) {
+                assertIdempotencyKeyForStorage(input.idempotencyKey);
+            }
+
             const run: ActionRun<TInput> = {
                 id: this.#createId('run'),
                 name: input.name,
@@ -119,6 +125,8 @@ export class MemoryStorageAdapter implements StorageAdapter {
     async claimActionRun<TInput extends JsonValue = JsonValue>(
         input: ClaimActionRunInput<TInput>,
     ): Promise<ClaimActionRunResult<TInput>> {
+        assertIdempotencyKeyForStorage(input.idempotencyKey);
+
         return this.#withWriteAccess(async () => {
             const existing = this.#findClaimedActionRun(input);
 
@@ -234,8 +242,14 @@ export class MemoryStorageAdapter implements StorageAdapter {
         });
     }
 
-    async getSideEffects(actionRunId: string): Promise<readonly ActionSideEffect[]> {
-        return (this.#sideEffectsByActionRunId.get(actionRunId) ?? []).map(cloneSideEffect);
+    async getSideEffects(query: ActionRunRecordQuery): Promise<readonly ActionSideEffect[]> {
+        this.#assertActionRunRecordQueryIsScoped(query);
+
+        if (!this.#actionRunMatchesRecordQuery(query)) {
+            return [];
+        }
+
+        return (this.#sideEffectsByActionRunId.get(query.actionRunId) ?? []).map(cloneSideEffect);
     }
 
     async recordConflict(input: RecordConflictInput): Promise<ActionConflict> {
@@ -259,8 +273,14 @@ export class MemoryStorageAdapter implements StorageAdapter {
         });
     }
 
-    async getConflicts(actionRunId: string): Promise<readonly ActionConflict[]> {
-        return (this.#conflictsByActionRunId.get(actionRunId) ?? []).map(cloneConflict);
+    async getConflicts(query: ActionRunRecordQuery): Promise<readonly ActionConflict[]> {
+        this.#assertActionRunRecordQueryIsScoped(query);
+
+        if (!this.#actionRunMatchesRecordQuery(query)) {
+            return [];
+        }
+
+        return (this.#conflictsByActionRunId.get(query.actionRunId) ?? []).map(cloneConflict);
     }
 
     async queryActionRuns(query: ActionHistoryQuery): Promise<readonly ActionRun[]> {
@@ -366,6 +386,47 @@ export class MemoryStorageAdapter implements StorageAdapter {
         }
 
         return run;
+    }
+
+    #assertActionRunRecordQueryIsScoped(query: ActionRunRecordQuery): void {
+        if (query.tenantId !== undefined) {
+            return;
+        }
+
+        if (query.actorId !== undefined && query.actorType !== undefined) {
+            return;
+        }
+
+        throw new RollbackKitError({
+            code: 'ACTION_PERMISSION_DENIED',
+            message:
+                'Action run related records require a tenant or actor scope before they can be read.',
+            details: {
+                actionRunId: query.actionRunId,
+            },
+        });
+    }
+
+    #actionRunMatchesRecordQuery(query: ActionRunRecordQuery): boolean {
+        const run = this.#actionRuns.get(query.actionRunId);
+
+        if (run === undefined) {
+            return false;
+        }
+
+        if (query.tenantId !== undefined && run.tenantId !== query.tenantId) {
+            return false;
+        }
+
+        if (query.actorId !== undefined && run.actor.id !== query.actorId) {
+            return false;
+        }
+
+        if (query.actorType !== undefined && run.actor.type !== query.actorType) {
+            return false;
+        }
+
+        return true;
     }
 
     #findClaimedActionRun(input: ClaimActionRunInput): ActionRun | null {

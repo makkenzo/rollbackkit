@@ -421,7 +421,13 @@ describe('RollbackKit undo lifecycle', () => {
         });
 
         expect(undoCalled).toBe(false);
-        await expect(kit.getConflicts(run.id)).resolves.toMatchObject([
+        await expect(
+            kit.getConflicts({
+                actionRunId: run.id,
+                actorId: actor.id,
+                actorType: actor.type,
+            }),
+        ).resolves.toMatchObject([
             {
                 reason: 'Project is active again.',
                 details: {
@@ -432,6 +438,57 @@ describe('RollbackKit undo lifecycle', () => {
         await expect(kit.getActionRun(run.id)).resolves.toMatchObject({
             status: 'undo_failed',
         });
+    });
+
+    it('requires scope when reading persisted conflicts through the runtime', async () => {
+        const storage = createMemoryStorageAdapter();
+
+        const kit = createRollbackKit({
+            storage,
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => ({}),
+                    undo: async () => ({}),
+                }),
+            ],
+        });
+
+        const run = await kit.execute({
+            name: 'project.archive',
+            actor,
+            tenantId: 'tenant_1',
+            input: {
+                projectId: 'project_1',
+            },
+        });
+
+        const conflict = await storage.recordConflict({
+            actionRunId: run.id,
+            reason: 'Project changed after execution.',
+        });
+
+        await expect(kit.getConflicts({ actionRunId: run.id })).rejects.toMatchObject({
+            code: 'ACTION_PERMISSION_DENIED',
+        });
+        await expect(
+            kit.getConflicts({
+                actionRunId: run.id,
+                tenantId: 'tenant_other',
+            }),
+        ).resolves.toEqual([]);
+        await expect(
+            kit.getConflicts({
+                actionRunId: run.id,
+                tenantId: 'tenant_1',
+            }),
+        ).resolves.toEqual([conflict]);
     });
 
     it('rejects undo when persisted conflicts already exist', async () => {
@@ -937,13 +994,13 @@ function createRollbackingActionRunLockStorage(): StorageAdapter & {
         recordSideEffect: <TPayload extends JsonValue = JsonValue>(
             input: RecordSideEffectInput<TPayload>,
         ) => storage.recordSideEffect(input),
-        getSideEffects: (actionRunId: string) => storage.getSideEffects(actionRunId),
+        getSideEffects: (query) => storage.getSideEffects(query),
         recordConflict: async (input) => {
             conflicts.push(input);
 
             return storage.recordConflict(input);
         },
-        getConflicts: (actionRunId: string) => storage.getConflicts(actionRunId),
+        getConflicts: (query) => storage.getConflicts(query),
         queryActionRuns: (query) => storage.queryActionRuns(query),
         withActionRunLock: async <TValue>(
             actionRunId: string,

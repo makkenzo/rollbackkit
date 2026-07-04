@@ -105,6 +105,13 @@ export interface ActionHistoryQuery {
     readonly cursor?: string;
 }
 
+export interface ActionRunRecordQuery {
+    readonly actionRunId: string;
+    readonly tenantId?: string;
+    readonly actorId?: string;
+    readonly actorType?: ActorType;
+}
+
 export interface StorageAdapter {
     /**
      * Run handler writes atomically.
@@ -147,11 +154,11 @@ export interface StorageAdapter {
         input: RecordSideEffectInput<TPayload>,
     ): Promise<ActionSideEffect<TPayload>>;
 
-    getSideEffects(actionRunId: string): Promise<readonly ActionSideEffect[]>;
+    getSideEffects(query: ActionRunRecordQuery): Promise<readonly ActionSideEffect[]>;
 
     recordConflict(input: RecordConflictInput): Promise<ActionConflict>;
 
-    getConflicts(actionRunId: string): Promise<readonly ActionConflict[]>;
+    getConflicts(query: ActionRunRecordQuery): Promise<readonly ActionConflict[]>;
 
     queryActionRuns(query: ActionHistoryQuery): Promise<readonly ActionRun[]>;
 

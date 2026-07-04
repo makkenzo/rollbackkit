@@ -244,7 +244,10 @@ Undo is designed to fail closed. Common causes:
 Check conflicts for the action run when status is `undo_failed`:
 
 ```ts
-const conflicts = await rollbackkit.getConflicts(actionRunId);
+const conflicts = await rollbackkit.getConflicts({
+  actionRunId,
+  tenantId,
+});
 ```
 
 For UI/API guidance, show conflict reasons as state explanations instead of generic server errors.

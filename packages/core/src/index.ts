@@ -42,12 +42,18 @@ export type {
     RollbackKitOptions,
     UndoActionRequest,
 } from './runtime';
-export { createRollbackKit, RollbackKit } from './runtime';
+export {
+    assertIdempotencyKeyForStorage,
+    createRollbackKit,
+    MAX_IDEMPOTENCY_KEY_BYTES,
+    RollbackKit,
+} from './runtime';
 export type { Clock, DurationMs, JsonArray, JsonObject, JsonPrimitive, JsonValue } from './shared';
 export { isJsonValue, systemClock } from './shared';
 export type {
     ActionConflict,
     ActionHistoryQuery,
+    ActionRunRecordQuery,
     ActionSideEffect,
     ClaimActionRunInput,
     ClaimActionRunResult,

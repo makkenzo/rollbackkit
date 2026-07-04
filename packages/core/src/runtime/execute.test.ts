@@ -516,6 +516,41 @@ describe('RollbackKit execute lifecycle', () => {
         expect(executionCount).toBe(1);
     });
 
+    it('rejects idempotency keys that are too large for indexed storage', async () => {
+        const kit = createRollbackKit({
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => ({}),
+                    undo: noopUndo,
+                }),
+            ],
+        });
+
+        await expect(
+            kit.execute({
+                name: 'project.archive',
+                actor,
+                idempotencyKey: 'x'.repeat(256),
+                input: {
+                    projectId: 'project_1',
+                },
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_INPUT_INVALID',
+            details: {
+                field: 'idempotencyKey',
+                maxBytes: 255,
+            },
+        });
+    });
+
     it('rejects idempotency key reuse with the same input and a different target', async () => {
         let executionCount = 0;
 
