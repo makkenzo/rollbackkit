@@ -434,6 +434,114 @@ describe('RollbackKit undo lifecycle', () => {
         });
     });
 
+    it('rejects undo when persisted conflicts already exist', async () => {
+        const storage = createMemoryStorageAdapter();
+        let undoCalled = false;
+
+        const kit = createRollbackKit({
+            storage,
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => ({}),
+                    undo: async () => {
+                        undoCalled = true;
+                        return {};
+                    },
+                }),
+            ],
+        });
+
+        const run = await kit.execute({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+        });
+
+        await storage.recordConflict({
+            actionRunId: run.id,
+            reason: 'Project changed after execution.',
+            details: {
+                projectId: 'project_1',
+            },
+        });
+
+        await expect(
+            kit.undo({
+                actionRunId: run.id,
+                actor: undoActor,
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_CONFLICT',
+        });
+
+        expect(undoCalled).toBe(false);
+        await expect(kit.getActionRun(run.id)).resolves.toMatchObject({
+            status: 'undo_failed',
+        });
+    });
+
+    it('rejects undo when completed irreversible side effects exist', async () => {
+        let undoCalled = false;
+
+        const kit = createRollbackKit({
+            actions: [
+                defineAction({
+                    name: 'member.invite',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Invite member',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async (context) => {
+                        await context.sideEffects.record({
+                            type: 'email.invitation',
+                            status: 'completed',
+                            reversibility: REVERSIBILITY.irreversible,
+                        });
+
+                        return {};
+                    },
+                    undo: async () => {
+                        undoCalled = true;
+                        return {};
+                    },
+                }),
+            ],
+        });
+
+        const run = await kit.execute({
+            name: 'member.invite',
+            actor,
+            input: {
+                email: 'grace@example.com',
+            },
+        });
+
+        await expect(
+            kit.undo({
+                actionRunId: run.id,
+                actor: undoActor,
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_CONFLICT',
+        });
+
+        expect(undoCalled).toBe(false);
+        await expect(kit.getActionRun(run.id)).resolves.toMatchObject({
+            status: 'undo_failed',
+        });
+    });
+
     it('persists undo failure state and conflicts after a transactional lock rolls back handler writes', async () => {
         const storage = createRollbackingActionRunLockStorage();
 
@@ -690,6 +798,96 @@ describe('RollbackKit undo lifecycle', () => {
             error: {
                 code: 'ACTION_UNDO_FAILED',
                 message: 'Action "project.archive" undo failed.',
+            },
+        });
+    });
+
+    it('throws when a required undo snapshot is missing', async () => {
+        const kit = createRollbackKit({
+            actions: [
+                defineAction({
+                    name: 'member.change_role',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Change role',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => ({}),
+                    undo: async (context) => {
+                        await context.snapshots.require('previousRole');
+
+                        return {};
+                    },
+                }),
+            ],
+        });
+
+        const run = await kit.execute({
+            name: 'member.change_role',
+            actor,
+            input: {
+                memberId: 'member_1',
+                role: 'admin',
+            },
+        });
+
+        await expect(
+            kit.undo({
+                actionRunId: run.id,
+                actor: undoActor,
+            }),
+        ).rejects.toMatchObject({
+            code: 'SNAPSHOT_NOT_FOUND',
+        });
+
+        await expect(kit.getActionRun(run.id)).resolves.toMatchObject({
+            status: 'undo_failed',
+        });
+    });
+
+    it('rejects non-json undo results before persisting completion', async () => {
+        const kit = createRollbackKit({
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => ({}),
+                    undo: async () => ({
+                        data: {
+                            restoredAt: new Date('2026-01-01T00:00:00.000Z'),
+                        } as never,
+                    }),
+                }),
+            ],
+        });
+
+        const run = await kit.execute({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+        });
+
+        await expect(
+            kit.undo({
+                actionRunId: run.id,
+                actor: undoActor,
+            }),
+        ).rejects.toMatchObject({
+            code: 'STORAGE_ERROR',
+        });
+
+        await expect(kit.getActionRun(run.id)).resolves.toMatchObject({
+            status: 'undo_failed',
+            error: {
+                code: 'STORAGE_ERROR',
             },
         });
     });

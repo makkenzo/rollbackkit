@@ -47,6 +47,7 @@
         "clean": "rm -rf dist"
     },
     "devDependencies": {
+        "@types/node": "catalog:",
         "tsdown": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:"

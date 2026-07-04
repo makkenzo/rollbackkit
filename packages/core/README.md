@@ -33,10 +33,10 @@ const archiveProject = defineAction({
         };
     },
     undo: async ({ snapshots }) => {
-        const previousProject = await snapshots.get('previousProject');
+        const previousProject = await snapshots.require('previousProject');
 
         return {
-            data: previousProject?.value ?? null,
+            data: previousProject.value,
         };
     },
 });

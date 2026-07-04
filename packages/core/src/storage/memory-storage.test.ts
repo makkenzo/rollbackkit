@@ -133,6 +133,160 @@ describe('MemoryStorageAdapter', () => {
         await expect(storage.getActionRun(run.id)).resolves.toEqual(updated);
     });
 
+    it('rolls back writes made inside a rejected transaction', async () => {
+        const storage = createMemoryStorageAdapter();
+
+        const run = await storage.createActionRun({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        await expect(
+            storage.withTransaction(async () => {
+                await storage.updateActionRun(run.id, {
+                    status: 'running',
+                    metadata: {
+                        step: 'mutated',
+                    },
+                });
+
+                await storage.saveSnapshot({
+                    actionRunId: run.id,
+                    key: 'previousProject',
+                    value: {
+                        status: 'active',
+                    },
+                });
+
+                await storage.recordSideEffect({
+                    actionRunId: run.id,
+                    type: 'email.sent',
+                    status: 'completed',
+                    reversibility: REVERSIBILITY.irreversible,
+                });
+
+                await storage.recordConflict({
+                    actionRunId: run.id,
+                    reason: 'Concurrent change detected.',
+                });
+
+                throw new Error('transaction failed');
+            }),
+        ).rejects.toThrow('transaction failed');
+
+        await expect(storage.getActionRun(run.id)).resolves.toEqual(run);
+        await expect(storage.getSnapshots(run.id)).resolves.toEqual([]);
+        await expect(storage.getSideEffects(run.id)).resolves.toEqual([]);
+        await expect(storage.getConflicts(run.id)).resolves.toEqual([]);
+    });
+
+    it('does not roll back a concurrent committed transaction', async () => {
+        const storage = createMemoryStorageAdapter();
+
+        let releaseFirst = () => {};
+        const firstCanFinish = new Promise<void>((resolve) => {
+            releaseFirst = () => resolve();
+        });
+
+        let secondStarted = () => {};
+        const secondDidStart = new Promise<void>((resolve) => {
+            secondStarted = () => resolve();
+        });
+
+        const first = storage.withTransaction(async () => {
+            await storage.createActionRun({
+                name: 'project.archive',
+                actor,
+                input: {
+                    projectId: 'project_1',
+                },
+                reversibility: REVERSIBILITY.full,
+            });
+
+            secondStarted();
+            await firstCanFinish;
+
+            throw new Error('first failed');
+        });
+
+        await secondDidStart;
+
+        const second = storage.withTransaction(async () =>
+            storage.createActionRun({
+                name: 'member.change_role',
+                actor,
+                input: {
+                    memberId: 'member_1',
+                },
+                reversibility: REVERSIBILITY.full,
+            }),
+        );
+
+        releaseFirst();
+
+        await expect(first).rejects.toThrow('first failed');
+        const committed = await second;
+
+        await expect(storage.queryActionRuns({})).resolves.toEqual([committed]);
+    });
+
+    it('does not roll back a concurrent committed write outside an explicit transaction', async () => {
+        const storage = createMemoryStorageAdapter();
+
+        const seed = await storage.createActionRun({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        let releaseFirst = () => {};
+        const firstCanFinish = new Promise<void>((resolve) => {
+            releaseFirst = () => resolve();
+        });
+
+        let firstStarted = () => {};
+        const firstDidStart = new Promise<void>((resolve) => {
+            firstStarted = () => resolve();
+        });
+
+        const first = storage.withTransaction(async () => {
+            await storage.updateActionRun(seed.id, {
+                status: 'running',
+            });
+
+            firstStarted();
+            await firstCanFinish;
+
+            throw new Error('first failed');
+        });
+
+        await firstDidStart;
+
+        const second = storage.createActionRun({
+            name: 'member.change_role',
+            actor,
+            input: {
+                memberId: 'member_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        releaseFirst();
+
+        await expect(first).rejects.toThrow('first failed');
+        const committed = await second;
+
+        await expect(storage.getActionRun(seed.id)).resolves.toEqual(seed);
+        await expect(storage.getActionRun(committed.id)).resolves.toEqual(committed);
+    });
+
     it('stores snapshots', async () => {
         const storage = createMemoryStorageAdapter();
 
@@ -254,6 +408,41 @@ describe('MemoryStorageAdapter', () => {
                 cursor: completedSecond.id,
             }),
         ).resolves.toEqual([first]);
+    });
+
+    it('filters action history by actor type and actor id together', async () => {
+        const storage = createMemoryStorageAdapter();
+
+        const userRun = await storage.createActionRun({
+            name: 'project.archive',
+            actor: {
+                id: 'actor_1',
+                type: 'user',
+            },
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        await storage.createActionRun({
+            name: 'system.reconcile',
+            actor: {
+                id: 'actor_1',
+                type: 'system',
+            },
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        await expect(
+            storage.queryActionRuns({
+                actorId: 'actor_1',
+                actorType: 'user',
+            }),
+        ).resolves.toEqual([userRun]);
     });
 
     it('serializes lock handlers for the same action run', async () => {

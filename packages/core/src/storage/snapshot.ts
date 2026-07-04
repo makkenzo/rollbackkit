@@ -26,5 +26,6 @@ export interface SnapshotRecorder {
 
 export interface SnapshotReader {
     get<TValue extends JsonValue = JsonValue>(key: string): Promise<Snapshot<TValue> | null>;
+    require<TValue extends JsonValue = JsonValue>(key: string): Promise<Snapshot<TValue>>;
     list(): Promise<readonly Snapshot[]>;
 }

@@ -1,6 +1,7 @@
 import { isRollbackKitError, RollbackKitError } from '../errors/rollbackkit-error';
 import type { ActionRun } from '../lifecycle/lifecycle';
 import { isUndoable } from '../lifecycle/reversibility';
+import type { ActionSideEffect } from '../storage/storage';
 
 export function normalizeExecutionError(actionName: string, error: unknown): RollbackKitError {
     if (isRollbackKitError(error)) {
@@ -84,6 +85,37 @@ export function createRecordedConflictError(run: ActionRun): RollbackKitError {
         details: {
             actionRunId: run.id,
             actionName: run.name,
+        },
+    });
+}
+
+export function createPersistedConflictError(
+    run: ActionRun,
+    conflictCount: number,
+): RollbackKitError {
+    return new RollbackKitError({
+        code: 'ACTION_CONFLICT',
+        message: `Action run "${run.id}" cannot be undone because persisted conflicts already exist.`,
+        details: {
+            actionRunId: run.id,
+            actionName: run.name,
+            conflictCount,
+        },
+    });
+}
+
+export function createIrreversibleSideEffectError(
+    run: ActionRun,
+    sideEffect: ActionSideEffect,
+): RollbackKitError {
+    return new RollbackKitError({
+        code: 'ACTION_CONFLICT',
+        message: `Action run "${run.id}" cannot be undone because side effect "${sideEffect.type}" is irreversible.`,
+        details: {
+            actionRunId: run.id,
+            actionName: run.name,
+            sideEffectId: sideEffect.id,
+            sideEffectType: sideEffect.type,
         },
     });
 }

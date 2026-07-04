@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import type { SerializedRollbackKitError } from '../errors/rollbackkit-error';
 import { RollbackKitError } from '../errors/rollbackkit-error';
 import type { ActionRun } from '../lifecycle/lifecycle';
@@ -33,6 +35,8 @@ export class MemoryStorageAdapter implements StorageAdapter {
     readonly #sideEffectsByActionRunId = new Map<string, ActionSideEffect[]>();
     readonly #conflictsByActionRunId = new Map<string, ActionConflict[]>();
     readonly #locks = new Map<string, Promise<void>>();
+    readonly #transactionContext = new AsyncLocalStorage<symbol>();
+    #transactionLock: Promise<void> = Promise.resolve();
 
     #nextId = 1;
 
@@ -42,51 +46,94 @@ export class MemoryStorageAdapter implements StorageAdapter {
     }
 
     async withTransaction<TValue>(handler: () => Promise<TValue>): Promise<TValue> {
-        return handler();
+        if (this.#transactionContext.getStore() !== undefined) {
+            return handler();
+        }
+
+        const previous = this.#transactionLock;
+        let release = () => {};
+        const current = new Promise<void>((resolve) => {
+            release = () => resolve();
+        });
+        const queued = previous.catch(() => undefined).then(() => current);
+
+        this.#transactionLock = queued;
+
+        await previous.catch(() => undefined);
+
+        const token = Symbol('memory-storage-transaction');
+
+        try {
+            return await this.#transactionContext.run(token, async () => {
+                const state = this.#captureState();
+
+                try {
+                    return await handler();
+                } catch (error) {
+                    this.#restoreState(state);
+
+                    throw error;
+                }
+            });
+        } finally {
+            release();
+
+            if (this.#transactionLock === queued) {
+                this.#transactionLock = Promise.resolve();
+            }
+        }
     }
 
     async createActionRun<TInput extends JsonValue = JsonValue>(
         input: CreateActionRunInput<TInput>,
     ): Promise<ActionRun<TInput>> {
-        const run: ActionRun<TInput> = {
-            id: this.#createId('run'),
-            name: input.name,
-            status: 'created',
-            actor: cloneActor(input.actor),
-            input: cloneJsonValue(input.input),
-            reversibility: cloneReversibility(input.reversibility),
-            createdAt: this.#clock.now(),
-            ...(input.tenantId === undefined ? {} : { tenantId: input.tenantId }),
-            ...(input.target === undefined ? {} : { target: cloneTarget(input.target) }),
-            ...(input.inputHash === undefined ? {} : { inputHash: input.inputHash }),
-            ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
-            ...(input.undoExpiresAt === undefined
-                ? {}
-                : { undoExpiresAt: cloneDate(input.undoExpiresAt) }),
-            ...(input.metadata === undefined ? {} : { metadata: cloneJsonObject(input.metadata) }),
-        };
+        return this.#withWriteAccess(async () => {
+            const run: ActionRun<TInput> = {
+                id: this.#createId('run'),
+                name: input.name,
+                status: 'created',
+                actor: cloneActor(input.actor),
+                input: cloneJsonValue(input.input),
+                reversibility: cloneReversibility(input.reversibility),
+                createdAt: this.#clock.now(),
+                ...(input.tenantId === undefined ? {} : { tenantId: input.tenantId }),
+                ...(input.target === undefined ? {} : { target: cloneTarget(input.target) }),
+                ...(input.inputHash === undefined ? {} : { inputHash: input.inputHash }),
+                ...(input.idempotencyKey === undefined
+                    ? {}
+                    : { idempotencyKey: input.idempotencyKey }),
+                ...(input.undoExpiresAt === undefined
+                    ? {}
+                    : { undoExpiresAt: cloneDate(input.undoExpiresAt) }),
+                ...(input.metadata === undefined
+                    ? {}
+                    : { metadata: cloneJsonObject(input.metadata) }),
+            };
 
-        this.#actionRuns.set(run.id, run as ActionRun);
+            this.#actionRuns.set(run.id, run as ActionRun);
 
-        return cloneActionRun(run);
+            return cloneActionRun(run);
+        });
     }
 
     async claimActionRun<TInput extends JsonValue = JsonValue>(
         input: ClaimActionRunInput<TInput>,
     ): Promise<ClaimActionRunResult<TInput>> {
-        const existing = this.#findClaimedActionRun(input);
+        return this.#withWriteAccess(async () => {
+            const existing = this.#findClaimedActionRun(input);
 
-        if (existing !== null) {
+            if (existing !== null) {
+                return {
+                    run: cloneActionRun(existing) as ActionRun<TInput>,
+                    created: false,
+                };
+            }
+
             return {
-                run: cloneActionRun(existing) as ActionRun<TInput>,
-                created: false,
+                run: await this.createActionRun(input),
+                created: true,
             };
-        }
-
-        return {
-            run: await this.createActionRun(input),
-            created: true,
-        };
+        });
     }
 
     async getActionRun(id: string): Promise<ActionRun | null> {
@@ -99,50 +146,60 @@ export class MemoryStorageAdapter implements StorageAdapter {
         id: string,
         input: UpdateActionRunInput<TResult>,
     ): Promise<ActionRun<JsonValue, TResult>> {
-        const existing = this.#requireActionRun(id);
+        return this.#withWriteAccess(async () => {
+            const existing = this.#requireActionRun(id);
 
-        const updated = {
-            ...existing,
-            ...(input.status === undefined ? {} : { status: input.status }),
-            ...(input.executedAt === undefined ? {} : { executedAt: cloneDate(input.executedAt) }),
-            ...(input.undoStartedAt === undefined
-                ? {}
-                : { undoStartedAt: cloneDate(input.undoStartedAt) }),
-            ...(input.undoneAt === undefined ? {} : { undoneAt: cloneDate(input.undoneAt) }),
-            ...(input.undoneBy === undefined ? {} : { undoneBy: cloneActor(input.undoneBy) }),
-            ...(input.result === undefined ? {} : { result: cloneJsonValue(input.result) }),
-            ...(input.undoResult === undefined
-                ? {}
-                : { undoResult: cloneJsonValue(input.undoResult) }),
-            ...(input.error === undefined ? {} : { error: cloneSerializedError(input.error) }),
-            ...(input.metadata === undefined ? {} : { metadata: cloneJsonObject(input.metadata) }),
-        } as ActionRun<JsonValue, TResult>;
+            const updated = {
+                ...existing,
+                ...(input.status === undefined ? {} : { status: input.status }),
+                ...(input.executedAt === undefined
+                    ? {}
+                    : { executedAt: cloneDate(input.executedAt) }),
+                ...(input.undoStartedAt === undefined
+                    ? {}
+                    : { undoStartedAt: cloneDate(input.undoStartedAt) }),
+                ...(input.undoneAt === undefined ? {} : { undoneAt: cloneDate(input.undoneAt) }),
+                ...(input.undoneBy === undefined ? {} : { undoneBy: cloneActor(input.undoneBy) }),
+                ...(input.result === undefined ? {} : { result: cloneJsonValue(input.result) }),
+                ...(input.undoResult === undefined
+                    ? {}
+                    : { undoResult: cloneJsonValue(input.undoResult) }),
+                ...(input.error === undefined ? {} : { error: cloneSerializedError(input.error) }),
+                ...(input.metadata === undefined
+                    ? {}
+                    : { metadata: cloneJsonObject(input.metadata) }),
+            } as ActionRun<JsonValue, TResult>;
 
-        this.#actionRuns.set(id, updated as ActionRun);
+            this.#actionRuns.set(id, updated as ActionRun);
 
-        return cloneActionRun(updated);
+            return cloneActionRun(updated);
+        });
     }
 
     async saveSnapshot<TValue extends JsonValue = JsonValue>(
         input: CreateSnapshotInput<TValue>,
     ): Promise<Snapshot<TValue>> {
-        this.#requireActionRun(input.actionRunId);
+        return this.#withWriteAccess(async () => {
+            this.#requireActionRun(input.actionRunId);
 
-        const snapshot: Snapshot<TValue> = {
-            id: this.#createId('snapshot'),
-            actionRunId: input.actionRunId,
-            key: input.key,
-            value: cloneJsonValue(input.value),
-            createdAt: this.#clock.now(),
-            ...(input.metadata === undefined ? {} : { metadata: cloneJsonObject(input.metadata) }),
-        };
+            const snapshot: Snapshot<TValue> = {
+                id: this.#createId('snapshot'),
+                actionRunId: input.actionRunId,
+                key: input.key,
+                value: cloneJsonValue(input.value),
+                createdAt: this.#clock.now(),
+                ...(input.metadata === undefined
+                    ? {}
+                    : { metadata: cloneJsonObject(input.metadata) }),
+            };
 
-        const snapshots = this.#snapshotsByActionRunId.get(input.actionRunId) ?? [];
-        snapshots.push(snapshot as Snapshot);
+            const snapshots = this.#snapshotsByActionRunId.get(input.actionRunId) ?? [];
+            snapshots.push(snapshot as Snapshot);
 
-        this.#snapshotsByActionRunId.set(input.actionRunId, snapshots);
+            this.#snapshotsByActionRunId.set(input.actionRunId, snapshots);
 
-        return cloneSnapshot(snapshot);
+            return cloneSnapshot(snapshot);
+        });
     }
 
     async getSnapshots(actionRunId: string): Promise<readonly Snapshot[]> {
@@ -152,25 +209,29 @@ export class MemoryStorageAdapter implements StorageAdapter {
     async recordSideEffect<TPayload extends JsonValue = JsonValue>(
         input: RecordSideEffectInput<TPayload>,
     ): Promise<ActionSideEffect<TPayload>> {
-        this.#requireActionRun(input.actionRunId);
+        return this.#withWriteAccess(async () => {
+            this.#requireActionRun(input.actionRunId);
 
-        const sideEffect: ActionSideEffect<TPayload> = {
-            id: this.#createId('effect'),
-            actionRunId: input.actionRunId,
-            type: input.type,
-            status: input.status,
-            reversibility: cloneReversibility(input.reversibility),
-            createdAt: this.#clock.now(),
-            ...(input.payload === undefined ? {} : { payload: cloneJsonValue(input.payload) }),
-            ...(input.metadata === undefined ? {} : { metadata: cloneJsonObject(input.metadata) }),
-        };
+            const sideEffect: ActionSideEffect<TPayload> = {
+                id: this.#createId('effect'),
+                actionRunId: input.actionRunId,
+                type: input.type,
+                status: input.status,
+                reversibility: cloneReversibility(input.reversibility),
+                createdAt: this.#clock.now(),
+                ...(input.payload === undefined ? {} : { payload: cloneJsonValue(input.payload) }),
+                ...(input.metadata === undefined
+                    ? {}
+                    : { metadata: cloneJsonObject(input.metadata) }),
+            };
 
-        const sideEffects = this.#sideEffectsByActionRunId.get(input.actionRunId) ?? [];
-        sideEffects.push(sideEffect as ActionSideEffect);
+            const sideEffects = this.#sideEffectsByActionRunId.get(input.actionRunId) ?? [];
+            sideEffects.push(sideEffect as ActionSideEffect);
 
-        this.#sideEffectsByActionRunId.set(input.actionRunId, sideEffects);
+            this.#sideEffectsByActionRunId.set(input.actionRunId, sideEffects);
 
-        return cloneSideEffect(sideEffect);
+            return cloneSideEffect(sideEffect);
+        });
     }
 
     async getSideEffects(actionRunId: string): Promise<readonly ActionSideEffect[]> {
@@ -178,22 +239,24 @@ export class MemoryStorageAdapter implements StorageAdapter {
     }
 
     async recordConflict(input: RecordConflictInput): Promise<ActionConflict> {
-        this.#requireActionRun(input.actionRunId);
+        return this.#withWriteAccess(async () => {
+            this.#requireActionRun(input.actionRunId);
 
-        const conflict: ActionConflict = {
-            id: this.#createId('conflict'),
-            actionRunId: input.actionRunId,
-            reason: input.reason,
-            createdAt: this.#clock.now(),
-            ...(input.details === undefined ? {} : { details: cloneJsonObject(input.details) }),
-        };
+            const conflict: ActionConflict = {
+                id: this.#createId('conflict'),
+                actionRunId: input.actionRunId,
+                reason: input.reason,
+                createdAt: this.#clock.now(),
+                ...(input.details === undefined ? {} : { details: cloneJsonObject(input.details) }),
+            };
 
-        const conflicts = this.#conflictsByActionRunId.get(input.actionRunId) ?? [];
-        conflicts.push(conflict);
+            const conflicts = this.#conflictsByActionRunId.get(input.actionRunId) ?? [];
+            conflicts.push(conflict);
 
-        this.#conflictsByActionRunId.set(input.actionRunId, conflicts);
+            this.#conflictsByActionRunId.set(input.actionRunId, conflicts);
 
-        return cloneConflict(conflict);
+            return cloneConflict(conflict);
+        });
     }
 
     async getConflicts(actionRunId: string): Promise<readonly ActionConflict[]> {
@@ -208,6 +271,10 @@ export class MemoryStorageAdapter implements StorageAdapter {
                 }
 
                 if (query.actorId !== undefined && run.actor.id !== query.actorId) {
+                    return false;
+                }
+
+                if (query.actorType !== undefined && run.actor.type !== query.actorType) {
                     return false;
                 }
 
@@ -258,29 +325,31 @@ export class MemoryStorageAdapter implements StorageAdapter {
         actionRunId: string,
         handler: (run: ActionRun) => Promise<TValue>,
     ): Promise<TValue> {
-        const previous = this.#locks.get(actionRunId) ?? Promise.resolve();
+        return this.#withWriteAccess(async () => {
+            const previous = this.#locks.get(actionRunId) ?? Promise.resolve();
 
-        let release = () => {};
+            let release = () => {};
 
-        const current = new Promise<void>((resolve) => {
-            release = () => resolve();
-        });
+            const current = new Promise<void>((resolve) => {
+                release = () => resolve();
+            });
 
-        const queued = previous.catch(() => undefined).then(() => current);
+            const queued = previous.catch(() => undefined).then(() => current);
 
-        this.#locks.set(actionRunId, queued);
+            this.#locks.set(actionRunId, queued);
 
-        await previous.catch(() => undefined);
+            await previous.catch(() => undefined);
 
-        try {
-            return await handler(cloneActionRun(this.#requireActionRun(actionRunId)));
-        } finally {
-            release();
+            try {
+                return await handler(cloneActionRun(this.#requireActionRun(actionRunId)));
+            } finally {
+                release();
 
-            if (this.#locks.get(actionRunId) === queued) {
-                this.#locks.delete(actionRunId);
+                if (this.#locks.get(actionRunId) === queued) {
+                    this.#locks.delete(actionRunId);
+                }
             }
-        }
+        });
     }
 
     #requireActionRun(id: string): ActionRun {
@@ -321,6 +390,58 @@ export class MemoryStorageAdapter implements StorageAdapter {
 
         return id;
     }
+
+    #captureState(): MemoryStorageState {
+        return {
+            nextId: this.#nextId,
+            actionRuns: new Map(
+                Array.from(this.#actionRuns, ([id, run]) => [id, cloneActionRun(run)]),
+            ),
+            snapshotsByActionRunId: new Map(
+                Array.from(this.#snapshotsByActionRunId, ([id, snapshots]) => [
+                    id,
+                    snapshots.map(cloneSnapshot),
+                ]),
+            ),
+            sideEffectsByActionRunId: new Map(
+                Array.from(this.#sideEffectsByActionRunId, ([id, sideEffects]) => [
+                    id,
+                    sideEffects.map(cloneSideEffect),
+                ]),
+            ),
+            conflictsByActionRunId: new Map(
+                Array.from(this.#conflictsByActionRunId, ([id, conflicts]) => [
+                    id,
+                    conflicts.map(cloneConflict),
+                ]),
+            ),
+        };
+    }
+
+    #restoreState(state: MemoryStorageState): void {
+        this.#nextId = state.nextId;
+
+        replaceMap(this.#actionRuns, state.actionRuns);
+        replaceMap(this.#snapshotsByActionRunId, state.snapshotsByActionRunId);
+        replaceMap(this.#sideEffectsByActionRunId, state.sideEffectsByActionRunId);
+        replaceMap(this.#conflictsByActionRunId, state.conflictsByActionRunId);
+    }
+
+    async #withWriteAccess<TValue>(handler: () => Promise<TValue>): Promise<TValue> {
+        if (this.#transactionContext.getStore() !== undefined) {
+            return handler();
+        }
+
+        return this.withTransaction(handler);
+    }
+}
+
+interface MemoryStorageState {
+    readonly nextId: number;
+    readonly actionRuns: Map<string, ActionRun>;
+    readonly snapshotsByActionRunId: Map<string, Snapshot[]>;
+    readonly sideEffectsByActionRunId: Map<string, ActionSideEffect[]>;
+    readonly conflictsByActionRunId: Map<string, ActionConflict[]>;
 }
 
 export function createMemoryStorageAdapter(
@@ -437,4 +558,12 @@ function cloneJsonValue<TValue extends JsonValue>(value: TValue): TValue {
 
 function cloneDate(value: Date): Date {
     return new Date(value.getTime());
+}
+
+function replaceMap<TKey, TValue>(target: Map<TKey, TValue>, source: Map<TKey, TValue>): void {
+    target.clear();
+
+    for (const [key, value] of source) {
+        target.set(key, value);
+    }
 }

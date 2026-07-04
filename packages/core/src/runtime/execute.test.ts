@@ -76,11 +76,12 @@ describe('RollbackKit execute lifecycle', () => {
 
             async withTransaction<TValue>(handler: () => Promise<TValue>): Promise<TValue> {
                 this.transactionCount += 1;
-                return handler();
+                return super.withTransaction(handler);
             }
         }
 
         const storage = new TransactionalMemoryStorage();
+        let executeTransactionCount = 0;
         const kit = createRollbackKit({
             storage,
             actions: [
@@ -92,7 +93,11 @@ describe('RollbackKit execute lifecycle', () => {
                         impact: [],
                         reversibility: REVERSIBILITY.full,
                     }),
-                    execute: async () => ({}),
+                    execute: async () => {
+                        executeTransactionCount = storage.transactionCount;
+
+                        return {};
+                    },
                     undo: noopUndo,
                 }),
             ],
@@ -106,7 +111,7 @@ describe('RollbackKit execute lifecycle', () => {
             },
         });
 
-        expect(storage.transactionCount).toBe(1);
+        expect(executeTransactionCount).toBeGreaterThan(0);
     });
 
     it('passes resolved target into execute context', async () => {
@@ -565,6 +570,114 @@ describe('RollbackKit execute lifecycle', () => {
         });
 
         expect(executionCount).toBe(1);
+    });
+
+    it('allows idempotent target labels and metadata to change when identity is unchanged', async () => {
+        let executionCount = 0;
+
+        const kit = createRollbackKit({
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => {
+                        executionCount += 1;
+
+                        return {};
+                    },
+                    undo: noopUndo,
+                }),
+            ],
+        });
+
+        const first = await kit.execute({
+            name: 'project.archive',
+            actor,
+            idempotencyKey: 'request_1',
+            target: {
+                id: 'project_1',
+                type: 'project',
+                label: 'Original project label',
+                metadata: {
+                    color: 'blue',
+                },
+            },
+            input: {
+                dryRun: false,
+            },
+        });
+
+        const second = await kit.execute({
+            name: 'project.archive',
+            actor,
+            idempotencyKey: 'request_1',
+            target: {
+                id: 'project_1',
+                type: 'project',
+                label: 'Renamed project label',
+                metadata: {
+                    color: 'green',
+                },
+            },
+            input: {
+                dryRun: false,
+            },
+        });
+
+        expect(second).toEqual(first);
+        expect(executionCount).toBe(1);
+    });
+
+    it('rejects non-json execute results before persisting completion', async () => {
+        const kit = createRollbackKit({
+            actions: [
+                defineAction({
+                    name: 'project.archive',
+                    reversibility: REVERSIBILITY.full,
+                    preview: async () => ({
+                        title: 'Archive project',
+                        impact: [],
+                        reversibility: REVERSIBILITY.full,
+                    }),
+                    execute: async () => ({
+                        data: {
+                            archivedAt: new Date('2026-01-01T00:00:00.000Z'),
+                        } as never,
+                    }),
+                    undo: noopUndo,
+                }),
+            ],
+        });
+
+        await expect(
+            kit.execute({
+                name: 'project.archive',
+                actor,
+                input: {
+                    projectId: 'project_1',
+                },
+            }),
+        ).rejects.toMatchObject({
+            code: 'STORAGE_ERROR',
+        });
+
+        await expect(
+            kit.queryActionRuns({
+                name: 'project.archive',
+            }),
+        ).resolves.toMatchObject([
+            {
+                status: 'failed',
+                error: {
+                    code: 'STORAGE_ERROR',
+                },
+            },
+        ]);
     });
 
     it('rejects executing undoable actions without an undo handler', async () => {

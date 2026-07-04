@@ -72,8 +72,6 @@ function actionTargetToJsonValue(target: ActionTarget | undefined): JsonValue {
     return {
         id: target.id,
         type: target.type,
-        ...(target.label === undefined ? {} : { label: target.label }),
-        ...(target.metadata === undefined ? {} : { metadata: target.metadata }),
     };
 }
 

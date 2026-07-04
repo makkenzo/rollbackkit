@@ -1,5 +1,5 @@
 import type { SerializedRollbackKitError } from '../errors/rollbackkit-error';
-import type { ActionActor } from '../identity/actor';
+import type { ActionActor, ActorType } from '../identity/actor';
 import type { ActionTarget } from '../identity/target';
 import type { ActionRun, ActionRunStatus } from '../lifecycle/lifecycle';
 import type { Reversibility } from '../lifecycle/reversibility';
@@ -96,6 +96,7 @@ export interface ConflictRecorder {
 export interface ActionHistoryQuery {
     readonly tenantId?: string;
     readonly actorId?: string;
+    readonly actorType?: ActorType;
     readonly targetType?: string;
     readonly targetId?: string;
     readonly name?: string;

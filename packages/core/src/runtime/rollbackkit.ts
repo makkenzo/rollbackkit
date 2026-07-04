@@ -26,6 +26,7 @@ import { resolveActionTarget } from './action-target';
 import { authorizeAction } from './authorization';
 import { createBaseActionContext, createBaseActionContextFromRun } from './contexts';
 import { assertIdempotentRequestMatches, createActionInputFingerprint } from './idempotency';
+import { assertJsonObjectForStorage, assertJsonValueForStorage } from './json-assertions';
 import { applyDefaultUndoWindow, createUndoExpiration, mergeMetadata } from './lifecycle-helpers';
 import {
     assertActionRunCanBeUndone,
@@ -33,6 +34,8 @@ import {
     createActionDefinitionNotUndoableError,
     createActionNotUndoableError,
     createActionRunNotFoundError,
+    createIrreversibleSideEffectError,
+    createPersistedConflictError,
     createRecordedConflictError,
     normalizeExecutionError,
     normalizeUndoError,
@@ -233,6 +236,14 @@ export class RollbackKit {
                     sideEffects: new BoundSideEffectRecorder(this.#storage, run.id),
                 });
 
+                if (result.data !== undefined) {
+                    assertJsonValueForStorage(result.data, 'execute.result.data');
+                }
+
+                if (result.metadata !== undefined) {
+                    assertJsonObjectForStorage(result.metadata, 'execute.result.metadata');
+                }
+
                 const completedMetadata = mergeMetadata(runningRun.metadata, result.metadata);
 
                 return this.#storage.updateActionRun(run.id, {
@@ -321,6 +332,23 @@ export class RollbackKit {
             } as const;
 
             const undoneRun = await this.#storage.withTransaction(async () => {
+                const persistedConflicts = await this.#storage.getConflicts(undoRunningRun.id);
+
+                if (persistedConflicts.length > 0) {
+                    throw createPersistedConflictError(undoRunningRun, persistedConflicts.length);
+                }
+
+                const irreversibleSideEffect = (
+                    await this.#storage.getSideEffects(undoRunningRun.id)
+                ).find(
+                    (sideEffect) =>
+                        sideEffect.status === 'completed' && !isUndoable(sideEffect.reversibility),
+                );
+
+                if (irreversibleSideEffect !== undefined) {
+                    throw createIrreversibleSideEffectError(undoRunningRun, irreversibleSideEffect);
+                }
+
                 await action.checkConflicts?.(undoContext);
 
                 if (conflicts?.hasRecords()) {
@@ -328,6 +356,14 @@ export class RollbackKit {
                 }
 
                 const result = await undoHandler(undoContext);
+
+                if (result.data !== undefined) {
+                    assertJsonValueForStorage(result.data, 'undo.result.data');
+                }
+
+                if (result.metadata !== undefined) {
+                    assertJsonObjectForStorage(result.metadata, 'undo.result.metadata');
+                }
 
                 const undoneMetadata = mergeMetadata(undoRunningRun.metadata, result.metadata);
 
