@@ -56,6 +56,7 @@ export async function checkDocs(options = {}) {
                 checkLinks,
                 markdownPathnames,
             }),
+            ...checkRecipeConflictRecording(fileUrl, source),
         );
     }
 
@@ -196,4 +197,68 @@ function isExternalOrAnchorLink(target) {
         target.startsWith('https://') ||
         target.startsWith('mailto:')
     );
+}
+
+function checkRecipeConflictRecording(fileUrl, source) {
+    const filePath = relative(process.cwd(), fileURLToPath(fileUrl));
+
+    if (!filePath.startsWith('apps/docs/recipes/') && !filePath.startsWith('recipes/')) {
+        return [];
+    }
+
+    const fileErrors = [];
+    const checkConflictsPattern = /async\s+checkConflicts\s*\([^)]*\)\s*\{/g;
+    let match = checkConflictsPattern.exec(source);
+
+    while (match !== null) {
+        const block = readBalancedBlock(source, match.index + match[0].length - 1);
+
+        if (block === null) {
+            match = checkConflictsPattern.exec(source);
+            continue;
+        }
+
+        if (
+            block.content.includes("code: 'ACTION_CONFLICT'") &&
+            !block.content.includes('conflicts.record(')
+        ) {
+            const lineNumber = source.slice(0, match.index).split(/\r?\n/).length;
+            fileErrors.push(
+                `${filePath}:${lineNumber}: checkConflicts examples throwing ACTION_CONFLICT must call conflicts.record first.`,
+            );
+        }
+
+        checkConflictsPattern.lastIndex = block.endIndex;
+        match = checkConflictsPattern.exec(source);
+    }
+
+    return fileErrors;
+}
+
+function readBalancedBlock(source, openingBraceIndex) {
+    let depth = 0;
+
+    for (let index = openingBraceIndex; index < source.length; index += 1) {
+        const character = source[index];
+
+        if (character === '{') {
+            depth += 1;
+            continue;
+        }
+
+        if (character !== '}') {
+            continue;
+        }
+
+        depth -= 1;
+
+        if (depth === 0) {
+            return {
+                content: source.slice(openingBraceIndex + 1, index),
+                endIndex: index + 1,
+            };
+        }
+    }
+
+    return null;
 }

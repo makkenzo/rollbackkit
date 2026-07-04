@@ -111,7 +111,7 @@ export const projectArchiveAction = defineAction({
         };
     },
 
-    async checkConflicts({ snapshots }) {
+    async checkConflicts({ snapshots, conflicts }) {
         const snapshot = await snapshots.get<{
             readonly workspaceId: string;
             readonly id: string;
@@ -124,6 +124,10 @@ export const projectArchiveAction = defineAction({
         const currentProject = await loadProject(snapshot.value.workspaceId, snapshot.value.id);
 
         if (currentProject.status !== 'archived') {
+            await conflicts.record('Project is no longer archived, so undo would be unsafe.', {
+                projectId: currentProject.id,
+            });
+
             throw new RollbackKitError({
                 code: 'ACTION_CONFLICT',
                 message: 'Project is no longer archived, so undo would be unsafe.',

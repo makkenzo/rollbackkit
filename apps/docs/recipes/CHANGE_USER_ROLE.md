@@ -117,7 +117,7 @@ export const memberChangeRoleAction = defineAction({
         };
     },
 
-    async checkConflicts({ snapshots }) {
+    async checkConflicts({ snapshots, conflicts }) {
         const snapshot = await snapshots.get<{
             readonly workspaceId: string;
             readonly memberId: string;
@@ -131,6 +131,12 @@ export const memberChangeRoleAction = defineAction({
         const currentMember = await loadMember(snapshot.value.workspaceId, snapshot.value.memberId);
 
         if (currentMember.role !== snapshot.value.changedToRole) {
+            await conflicts.record('Member role changed again, so undo would be unsafe.', {
+                memberId: currentMember.id,
+                currentRole: currentMember.role,
+                expectedRole: snapshot.value.changedToRole,
+            });
+
             throw new RollbackKitError({
                 code: 'ACTION_CONFLICT',
                 message: 'Member role changed again, so undo would be unsafe.',
