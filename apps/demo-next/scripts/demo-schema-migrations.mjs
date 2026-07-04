@@ -10,6 +10,38 @@ const DEMO_SCHEMA_MIGRATIONS = [
     },
 ];
 
+const EXPECTED_DEMO_SCHEMA_COLUMNS = new Map([
+    ['demo_workspaces', ['id', 'slug', 'name', 'created_at']],
+    ['demo_members', ['id', 'workspace_id', 'name', 'email', 'role', 'created_at']],
+    [
+        'demo_projects',
+        [
+            'id',
+            'workspace_id',
+            'name',
+            'owner_member_id',
+            'status',
+            'archived_at',
+            'updated_at',
+            'created_at',
+        ],
+    ],
+    [
+        'demo_documents',
+        [
+            'id',
+            'workspace_id',
+            'project_id',
+            'owner_member_id',
+            'title',
+            'state',
+            'archived_at',
+            'updated_at',
+            'created_at',
+        ],
+    ],
+]);
+
 export async function migrateDemoSchema(client) {
     await client.query(`
 CREATE TABLE IF NOT EXISTS demo_schema_migrations (
@@ -29,6 +61,7 @@ CREATE TABLE IF NOT EXISTS demo_schema_migrations (
         const appliedChecksum = applied.get(migration.id);
 
         if (appliedChecksum === checksum) {
+            await assertExpectedDemoSchema(client, migration);
             continue;
         }
 
@@ -59,6 +92,7 @@ CREATE TABLE IF NOT EXISTS demo_schema_migrations (
 
         for (const migration of pending) {
             await client.query(migration.sql);
+            await assertExpectedDemoSchema(client, migration);
             await client.query(
                 `
 INSERT INTO demo_schema_migrations (id, description, checksum)
@@ -94,4 +128,54 @@ ORDER BY id ASC
 
 function createDemoMigrationChecksum(sql) {
     return `sha256:${createHash('sha256').update(sql).digest('hex')}`;
+}
+
+async function assertExpectedDemoSchema(client, migration) {
+    const expectedTables = [...EXPECTED_DEMO_SCHEMA_COLUMNS.keys()];
+    const result = await client.query(
+        `
+SELECT table_name, column_name
+FROM information_schema.columns
+WHERE table_schema = current_schema()
+  AND table_name = ANY($1::text[])
+ORDER BY table_name ASC, ordinal_position ASC
+`,
+        [expectedTables],
+    );
+
+    const actualColumnsByTable = new Map();
+
+    for (const row of result.rows) {
+        const tableName = String(row.table_name);
+        const columnName = String(row.column_name);
+        const columns = actualColumnsByTable.get(tableName) ?? new Set();
+
+        columns.add(columnName);
+        actualColumnsByTable.set(tableName, columns);
+    }
+
+    const missing = [];
+
+    for (const [tableName, expectedColumns] of EXPECTED_DEMO_SCHEMA_COLUMNS) {
+        const actualColumns = actualColumnsByTable.get(tableName);
+
+        if (actualColumns === undefined) {
+            missing.push(`${tableName}.*`);
+            continue;
+        }
+
+        for (const columnName of expectedColumns) {
+            if (!actualColumns.has(columnName)) {
+                missing.push(`${tableName}.${columnName}`);
+            }
+        }
+    }
+
+    if (missing.length > 0) {
+        throw new Error(
+            `Demo schema migration "${migration.id}" cannot be marked applied because expected demo schema is missing: ${missing.join(
+                ', ',
+            )}.`,
+        );
+    }
 }

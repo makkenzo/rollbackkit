@@ -1,7 +1,12 @@
 'use server';
 
+import type { DemoActionRunDto } from '@/lib/demo-action-types';
 import { MEMBER_CHANGE_ROLE_ACTION_NAME } from '@/lib/server/actions/member-change-role.action';
 import { executeDemoAction, previewDemoAction } from '@/lib/server/demo-action-service';
+import {
+    createDemoMutationDeniedResponse,
+    isDemoMutationAllowed,
+} from '@/lib/server/demo-mutation-guard';
 import { getDemoRequestContext } from '@/lib/server/demo-request-context';
 import { revalidateDemoHome } from './revalidation';
 
@@ -26,6 +31,10 @@ export async function executeMemberRoleChange(
     role: EditableMemberRole,
     idempotencyKey: string,
 ) {
+    if (!isDemoMutationAllowed()) {
+        return createDemoMutationDeniedResponse<DemoActionRunDto>();
+    }
+
     const context = getDemoRequestContext();
     const response = await executeDemoAction(
         MEMBER_CHANGE_ROLE_ACTION_NAME,
