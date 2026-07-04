@@ -16,16 +16,23 @@ pnpm add @rollbackkit/core @rollbackkit/postgres pg
 Run migrations before creating a `PostgresStore`:
 
 ```bash
-ROLLBACKKIT_DATABASE_URL="postgres://user:password@localhost:5432/app_database" \
+ROLLBACKKIT_DATABASE_URL="$DATABASE_URL" \
 pnpm exec rollbackkit migrate
 ```
 
 Check status:
 
 ```bash
-ROLLBACKKIT_DATABASE_URL="postgres://user:password@localhost:5432/app_database" \
+ROLLBACKKIT_DATABASE_URL="$DATABASE_URL" \
 pnpm exec rollbackkit doctor
 ```
+
+Set `advisoryLockTimeoutMs` on `createPostgresMigrationRunner` when migration startup should fail
+instead of waiting indefinitely for another runner's advisory lock.
+
+Legacy migration rows without checksums are rejected by default. If you have verified an old schema
+manually and need to stamp bundled checksums for a one-time repair, pass
+`unsafeAllowLegacyChecksumBackfill: true` to `createPostgresMigrationRunner`.
 
 ## Store Setup
 
@@ -47,6 +54,7 @@ export async function withRollbackKit<TValue>(
         const rollbackkit = createRollbackKit({
             storage: createPostgresStore({
                 executor: client,
+                actionRunLockTimeoutMs: 5_000,
             }),
             actions: [
                 // your actions

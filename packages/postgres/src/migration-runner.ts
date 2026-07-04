@@ -46,6 +46,14 @@ interface SchemaMigrationTableRow extends QueryResultRow {
     readonly table_name: string | null;
 }
 
+interface LockTimeoutRow extends QueryResultRow {
+    readonly lock_timeout: string;
+}
+
+interface LegacyChecksumRow extends QueryResultRow {
+    readonly id: string;
+}
+
 export interface PostgresQueryExecutor {
     query<TResult extends QueryResultRow = QueryResultRow>(
         text: string,
@@ -74,6 +82,8 @@ export interface PostgresMigrationStatus {
 export interface PostgresMigrationRunnerOptions {
     readonly executor: PostgresQueryExecutor;
     readonly migrations?: readonly RollbackKitPostgresMigration[];
+    readonly advisoryLockTimeoutMs?: number;
+    readonly unsafeAllowLegacyChecksumBackfill?: boolean;
 }
 
 export interface RollbackKitPostgresMigrationErrorOptions {
@@ -105,6 +115,8 @@ export class RollbackKitPostgresMigrationError extends Error {
 export class PostgresMigrationRunner {
     readonly #executor: PostgresQueryExecutor;
     readonly #migrations: readonly RollbackKitPostgresMigration[];
+    readonly #advisoryLockTimeoutMs: number | undefined;
+    readonly #unsafeAllowLegacyChecksumBackfill: boolean;
 
     constructor(options: PostgresMigrationRunnerOptions) {
         assertSingleConnectionExecutor(
@@ -114,8 +126,12 @@ export class PostgresMigrationRunner {
 
         this.#executor = options.executor;
         this.#migrations = options.migrations ?? ROLLBACKKIT_POSTGRES_MIGRATIONS;
+        this.#advisoryLockTimeoutMs = options.advisoryLockTimeoutMs;
+        this.#unsafeAllowLegacyChecksumBackfill =
+            options.unsafeAllowLegacyChecksumBackfill ?? false;
 
         assertUniqueMigrationIds(this.#migrations);
+        assertPositiveIntegerOption(this.#advisoryLockTimeoutMs, 'advisoryLockTimeoutMs');
     }
 
     async getAppliedMigrations(): Promise<readonly AppliedPostgresMigration[]> {
@@ -227,19 +243,51 @@ export class PostgresMigrationRunner {
     async #ensureSchemaMigrationChecksums(): Promise<void> {
         await this.#executor.query(SCHEMA_MIGRATIONS_CHECKSUM_COLUMN_SQL);
 
-        for (const migration of this.#migrations) {
-            await this.#executor.query(
-                `
+        const legacyMigrationIds = await this.#readLegacyChecksumMigrationIds();
+
+        if (legacyMigrationIds.length > 0 && !this.#unsafeAllowLegacyChecksumBackfill) {
+            const [migrationId] = legacyMigrationIds;
+
+            if (migrationId === undefined) {
+                throw new RollbackKitPostgresMigrationError(
+                    'Applied RollbackKit PostgreSQL migration does not have a checksum.',
+                );
+            }
+
+            throw new RollbackKitPostgresMigrationError(
+                `Applied RollbackKit PostgreSQL migration "${migrationId}" does not have a checksum. Refusing to backfill checksums without explicit unsafe legacy opt-in.`,
+                {
+                    migrationId,
+                },
+            );
+        }
+
+        if (this.#unsafeAllowLegacyChecksumBackfill) {
+            for (const migration of this.#migrations) {
+                await this.#executor.query(
+                    `
 UPDATE rollbackkit_schema_migrations
 SET checksum = $2
 WHERE id = $1
   AND (checksum IS NULL OR btrim(checksum) = '')
 `,
-                [migration.id, createMigrationChecksum(migration)],
-            );
+                    [migration.id, createMigrationChecksum(migration)],
+                );
+            }
         }
 
         await this.#executor.query(SCHEMA_MIGRATIONS_CHECKSUM_NOT_NULL_SQL);
+    }
+
+    async #readLegacyChecksumMigrationIds(): Promise<readonly string[]> {
+        const result = await this.#executor.query<LegacyChecksumRow>(`
+SELECT id
+FROM rollbackkit_schema_migrations
+WHERE checksum IS NULL OR btrim(checksum) = ''
+ORDER BY id ASC
+`);
+
+        return result.rows.map((row) => row.id);
     }
 
     async #readSchemaMigrationsTableExists(): Promise<boolean> {
@@ -265,19 +313,52 @@ SELECT to_regclass('rollbackkit_schema_migrations')::text AS table_name
     }
 
     async #withMigrationAdvisoryLock<TValue>(handler: () => Promise<TValue>): Promise<TValue> {
-        await this.#executor.query(ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_SQL, [
-            ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_CLASS_ID,
-        ]);
+        const previousLockTimeout = await this.#setAdvisoryLockTimeout();
+        let lockAcquired = false;
 
         try {
+            await this.#executor.query(ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_SQL, [
+                ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_CLASS_ID,
+            ]);
+            lockAcquired = true;
+
             return await handler();
         } finally {
-            await this.#executor
-                .query(ROLLBACKKIT_MIGRATION_ADVISORY_UNLOCK_SQL, [
-                    ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_CLASS_ID,
-                ])
-                .catch(() => undefined);
+            if (lockAcquired) {
+                await this.#executor
+                    .query(ROLLBACKKIT_MIGRATION_ADVISORY_UNLOCK_SQL, [
+                        ROLLBACKKIT_MIGRATION_ADVISORY_LOCK_CLASS_ID,
+                    ])
+                    .catch(() => undefined);
+            }
+
+            await this.#restoreAdvisoryLockTimeout(previousLockTimeout);
         }
+    }
+
+    async #setAdvisoryLockTimeout(): Promise<string | undefined> {
+        if (this.#advisoryLockTimeoutMs === undefined) {
+            return undefined;
+        }
+
+        const result = await this.#executor.query<LockTimeoutRow>('SHOW lock_timeout');
+        const previousLockTimeout = result.rows[0]?.lock_timeout ?? '0';
+
+        await this.#executor.query("SELECT set_config('lock_timeout', $1, false)", [
+            `${this.#advisoryLockTimeoutMs}ms`,
+        ]);
+
+        return previousLockTimeout;
+    }
+
+    async #restoreAdvisoryLockTimeout(previousLockTimeout: string | undefined): Promise<void> {
+        if (previousLockTimeout === undefined) {
+            return;
+        }
+
+        await this.#executor
+            .query("SELECT set_config('lock_timeout', $1, false)", [previousLockTimeout])
+            .catch(() => undefined);
     }
 
     #createMigrationStatus(
@@ -285,6 +366,7 @@ SELECT to_regclass('rollbackkit_schema_migrations')::text AS table_name
         schemaTableExists: boolean,
     ): PostgresMigrationStatus {
         assertAppliedMigrationChecksums(appliedMigrations, this.#migrations);
+        assertAppliedMigrationsAreBundledPrefix(appliedMigrations, this.#migrations);
 
         const appliedIds = new Set(appliedMigrations.map((migration) => migration.id));
 
@@ -318,6 +400,18 @@ function assertUniqueMigrationIds(migrations: readonly RollbackKitPostgresMigrat
 
         seen.add(migration.id);
     }
+}
+
+function assertPositiveIntegerOption(value: number | undefined, name: string): void {
+    if (value === undefined) {
+        return;
+    }
+
+    if (Number.isInteger(value) && value > 0) {
+        return;
+    }
+
+    throw new RollbackKitPostgresMigrationError(`${name} must be a positive integer.`);
 }
 
 export function assertSingleConnectionExecutor(executor: unknown, message: string): void {
@@ -366,6 +460,38 @@ function assertAppliedMigrationChecksums(
         if (appliedMigration.checksum !== expectedChecksum) {
             throw new RollbackKitPostgresMigrationError(
                 `Applied RollbackKit PostgreSQL migration "${appliedMigration.id}" checksum does not match the bundled migration.`,
+                {
+                    migrationId: appliedMigration.id,
+                },
+            );
+        }
+    }
+}
+
+function assertAppliedMigrationsAreBundledPrefix(
+    appliedMigrations: readonly AppliedPostgresMigration[],
+    migrations: readonly RollbackKitPostgresMigration[],
+): void {
+    for (const [index, appliedMigration] of appliedMigrations.entries()) {
+        const bundledMigration = migrations[index];
+
+        if (bundledMigration?.id !== appliedMigration.id) {
+            throw new RollbackKitPostgresMigrationError(
+                `Applied RollbackKit PostgreSQL migration "${appliedMigration.id}" is not the next bundled migration at position ${index + 1}.`,
+                {
+                    migrationId: appliedMigration.id,
+                },
+            );
+        }
+
+        const previousMigration = appliedMigrations[index - 1];
+
+        if (
+            previousMigration !== undefined &&
+            appliedMigration.appliedAt.getTime() < previousMigration.appliedAt.getTime()
+        ) {
+            throw new RollbackKitPostgresMigrationError(
+                `Applied RollbackKit PostgreSQL migration "${appliedMigration.id}" was recorded before an earlier bundled migration.`,
                 {
                     migrationId: appliedMigration.id,
                 },

@@ -51,11 +51,13 @@ export interface PostgresStoreOptions {
      */
     readonly executor: PostgresQueryExecutor;
     readonly clock?: Clock;
+    readonly actionRunLockTimeoutMs?: number;
 }
 
 export class PostgresStore implements StorageAdapter {
     readonly #executor: PostgresQueryExecutor;
     readonly #clock: Clock;
+    readonly #actionRunLockTimeoutMs: number | undefined;
 
     constructor(options: PostgresStoreOptions) {
         assertSingleConnectionExecutor(
@@ -65,6 +67,9 @@ export class PostgresStore implements StorageAdapter {
 
         this.#executor = options.executor;
         this.#clock = options.clock ?? systemClock;
+        this.#actionRunLockTimeoutMs = options.actionRunLockTimeoutMs;
+
+        assertPositiveIntegerOption(this.#actionRunLockTimeoutMs, 'actionRunLockTimeoutMs');
     }
 
     async withTransaction<TValue>(handler: () => Promise<TValue>): Promise<TValue> {
@@ -501,6 +506,10 @@ ORDER BY created_at ASC, id ASC
             addCondition('actor_id =', query.actorId);
         }
 
+        if (query.actorType !== undefined) {
+            addCondition('actor_type =', query.actorType);
+        }
+
         if (query.targetType !== undefined) {
             addCondition('target_type =', query.targetType);
         }
@@ -563,6 +572,8 @@ ${limitSql}
         await this.#executor.query('BEGIN');
 
         try {
+            await this.#applyActionRunLockTimeout();
+
             const result = await this.#executor.query<ActionRunRow>(
                 `
 SELECT ${ACTION_RUN_COLUMNS_SQL}
@@ -589,6 +600,16 @@ FOR UPDATE
 
             throw error;
         }
+    }
+
+    async #applyActionRunLockTimeout(): Promise<void> {
+        if (this.#actionRunLockTimeoutMs === undefined) {
+            return;
+        }
+
+        await this.#executor.query("SELECT set_config('lock_timeout', $1, true)", [
+            `${this.#actionRunLockTimeoutMs}ms`,
+        ]);
     }
 }
 
@@ -631,6 +652,10 @@ function actionRunMatchesHistoryQuery(run: ActionRun, query: ActionHistoryQuery)
         return false;
     }
 
+    if (query.actorType !== undefined && run.actor.type !== query.actorType) {
+        return false;
+    }
+
     if (query.targetType !== undefined && run.target?.type !== query.targetType) {
         return false;
     }
@@ -648,4 +673,22 @@ function actionRunMatchesHistoryQuery(run: ActionRun, query: ActionHistoryQuery)
     }
 
     return true;
+}
+
+function assertPositiveIntegerOption(value: number | undefined, name: string): void {
+    if (value === undefined) {
+        return;
+    }
+
+    if (Number.isInteger(value) && value > 0) {
+        return;
+    }
+
+    throw new RollbackKitError({
+        code: 'STORAGE_ERROR',
+        message: `${name} must be a positive integer.`,
+        details: {
+            option: name,
+        },
+    });
 }

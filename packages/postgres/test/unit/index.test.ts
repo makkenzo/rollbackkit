@@ -174,7 +174,7 @@ describe('@rollbackkit/postgres', () => {
         ).toBe(false);
     });
 
-    it('backfills checksums for known migrations applied before checksum tracking', async () => {
+    it('rejects legacy migrations without checksums by default', async () => {
         const executor = new FakePostgresExecutor(
             [
                 {
@@ -188,6 +188,33 @@ describe('@rollbackkit/postgres', () => {
         );
 
         const runner = createPostgresMigrationRunner({ executor });
+
+        await expect(runner.migrate()).rejects.toThrow(RollbackKitPostgresMigrationError);
+
+        expect(
+            executor.queries.some((query) =>
+                query.text.includes('UPDATE rollbackkit_schema_migrations'),
+            ),
+        ).toBe(false);
+    });
+
+    it('backfills checksums for known migrations only with explicit unsafe legacy opt-in', async () => {
+        const executor = new FakePostgresExecutor(
+            [
+                {
+                    id: '0001_initial_schema',
+                    applied_at: '2026-01-01T00:00:00.000Z',
+                },
+            ],
+            {
+                schemaMigrationsTableExists: true,
+            },
+        );
+
+        const runner = createPostgresMigrationRunner({
+            executor,
+            unsafeAllowLegacyChecksumBackfill: true,
+        });
 
         const result = await runner.migrate();
 
@@ -231,6 +258,42 @@ describe('@rollbackkit/postgres', () => {
                     query.text.includes('ALTER COLUMN checksum SET NOT NULL'),
             ),
         ).toBe(true);
+    });
+
+    it('rejects applied migrations with gaps before pending migrations', async () => {
+        const executor = new FakePostgresExecutor(
+            [createAppliedMigrationRow('0002_action_run_idempotency', '2026-01-01T00:00:00.000Z')],
+            {
+                schemaMigrationsTableExists: true,
+            },
+        );
+
+        const runner = createPostgresMigrationRunner({ executor });
+
+        await expect(runner.getMigrationStatus()).rejects.toThrow(
+            RollbackKitPostgresMigrationError,
+        );
+    });
+
+    it('rejects applied migrations recorded out of bundled order', async () => {
+        const executor = new FakePostgresExecutor(
+            [
+                createAppliedMigrationRow('0001_initial_schema', '2026-01-01T00:00:01.000Z'),
+                createAppliedMigrationRow(
+                    '0002_action_run_idempotency',
+                    '2026-01-01T00:00:00.000Z',
+                ),
+            ],
+            {
+                schemaMigrationsTableExists: true,
+            },
+        );
+
+        const runner = createPostgresMigrationRunner({ executor });
+
+        await expect(runner.getMigrationStatus()).rejects.toThrow(
+            RollbackKitPostgresMigrationError,
+        );
     });
 
     it('applies validation migration after audit invariants were already applied', async () => {
@@ -388,6 +451,30 @@ describe('@rollbackkit/postgres', () => {
 
         expect(lockQuery?.text).toContain('current_schema()');
         expect(lockQuery?.text).toContain('rollbackkit_schema_migrations');
+    });
+
+    it('applies and restores an advisory lock timeout when configured', async () => {
+        const executor = new FakePostgresExecutor();
+        const runner = createPostgresMigrationRunner({
+            executor,
+            advisoryLockTimeoutMs: 1_500,
+        });
+
+        await runner.getMigrationStatus();
+
+        expect(
+            executor.queries.some(
+                (query) =>
+                    query.text.includes("set_config('lock_timeout'") &&
+                    query.values?.[0] === '1500ms',
+            ),
+        ).toBe(true);
+        expect(
+            executor.queries.some(
+                (query) =>
+                    query.text.includes("set_config('lock_timeout'") && query.values?.[0] === '0',
+            ),
+        ).toBe(true);
     });
 
     it('rejects applied migrations whose checksum no longer matches', async () => {

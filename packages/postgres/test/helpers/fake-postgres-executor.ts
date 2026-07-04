@@ -62,6 +62,18 @@ export class FakePostgresExecutor implements PostgresQueryExecutor {
             return createQueryResult([]);
         }
 
+        if (trimmedText === 'SHOW lock_timeout') {
+            return createQueryResult([
+                {
+                    lock_timeout: '0',
+                },
+            ] as unknown as TResult[]);
+        }
+
+        if (text.includes("set_config('lock_timeout'")) {
+            return createQueryResult([]);
+        }
+
         if (text.includes("to_regclass('rollbackkit_schema_migrations')")) {
             return createQueryResult([
                 {
@@ -76,6 +88,18 @@ export class FakePostgresExecutor implements PostgresQueryExecutor {
             this.schemaMigrationsTableExists = true;
 
             return createQueryResult([]);
+        }
+
+        if (
+            text.includes('SELECT id') &&
+            text.includes('rollbackkit_schema_migrations') &&
+            text.includes('WHERE checksum IS NULL')
+        ) {
+            return createQueryResult(
+                this.schemaMigrationRows.filter(
+                    (row) => row.checksum === undefined || row.checksum.trim() === '',
+                ) as unknown as TResult[],
+            );
         }
 
         if (text.includes('SELECT id') && text.includes('rollbackkit_schema_migrations')) {
@@ -468,6 +492,7 @@ function applyActionHistoryQuery(
 
     result = filterBySqlColumn(result, text, values, 'tenant_id');
     result = filterBySqlColumn(result, text, values, 'actor_id');
+    result = filterBySqlColumn(result, text, values, 'actor_type');
     result = filterBySqlColumn(result, text, values, 'target_type');
     result = filterBySqlColumn(result, text, values, 'target_id');
     result = filterBySqlColumn(result, text, values, 'name');

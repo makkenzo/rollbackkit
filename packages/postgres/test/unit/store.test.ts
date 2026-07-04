@@ -839,7 +839,7 @@ describe('PostgresStore action runs', () => {
         expect(historyQuery?.values).toEqual(['tenant_1', 'project.archive']);
     });
 
-    it('queries action runs by actor, target and status', async () => {
+    it('queries action runs by actor type, actor id, target and status', async () => {
         let now = new Date('2026-01-01T00:00:00.000Z');
         const executor = new FakePostgresExecutor();
 
@@ -869,14 +869,14 @@ describe('PostgresStore action runs', () => {
 
         await store.createActionRun({
             name: 'project.archive',
-            actor,
-            tenantId: 'tenant_1',
-            target: {
-                id: 'project_2',
-                type: 'project',
+            actor: {
+                id: actor.id,
+                type: 'system',
             },
+            tenantId: 'tenant_1',
+            target,
             input: {
-                projectId: 'project_2',
+                projectId: 'project_1',
             },
             reversibility: REVERSIBILITY.full,
         });
@@ -884,11 +884,22 @@ describe('PostgresStore action runs', () => {
         await expect(
             store.queryActionRuns({
                 actorId: actor.id,
+                actorType: actor.type,
                 targetType: target.type,
                 targetId: target.id,
                 status: 'completed',
             }),
         ).resolves.toEqual([completed]);
+
+        const historyQuery = executor.queries.find(
+            (query) =>
+                query.text.includes('FROM rollbackkit_action_runs') &&
+                query.text.includes('ORDER BY created_at DESC, id DESC') &&
+                query.text.includes('actor_type ='),
+        );
+
+        expect(historyQuery?.text).toContain('actor_id = $1');
+        expect(historyQuery?.text).toContain('actor_type = $2');
     });
 
     it('queries action runs with cursor and limit', async () => {
@@ -1086,6 +1097,57 @@ describe('PostgresStore action runs', () => {
         await expect(store.getActionRun(created.id)).resolves.toMatchObject({
             status: 'completed',
         });
+    });
+
+    it('applies row lock timeout inside locked action handlers when configured', async () => {
+        const executor = new FakePostgresExecutor();
+        const store = createPostgresStore({
+            executor,
+            actionRunLockTimeoutMs: 750,
+        });
+
+        const created = await store.createActionRun({
+            name: 'project.archive',
+            actor,
+            input: {
+                projectId: 'project_1',
+            },
+            reversibility: REVERSIBILITY.full,
+        });
+
+        await store.withActionRunLock(created.id, async () => ({}));
+
+        const transactionQueries = executor.queries
+            .map((query) => ({
+                text: query.text.trim(),
+                values: query.values,
+            }))
+            .filter(
+                (query) =>
+                    query.text === 'BEGIN' ||
+                    query.text.includes("set_config('lock_timeout'") ||
+                    query.text.includes('FOR UPDATE') ||
+                    query.text === 'COMMIT',
+            );
+
+        expect(transactionQueries).toEqual([
+            {
+                text: 'BEGIN',
+                values: undefined,
+            },
+            {
+                text: "SELECT set_config('lock_timeout', $1, true)",
+                values: ['750ms'],
+            },
+            {
+                text: expect.stringContaining('FOR UPDATE'),
+                values: [created.id],
+            },
+            {
+                text: 'COMMIT',
+                values: undefined,
+            },
+        ]);
     });
 
     it('rolls back locked handlers when the handler throws', async () => {
