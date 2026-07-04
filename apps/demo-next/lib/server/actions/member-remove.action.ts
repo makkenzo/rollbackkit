@@ -60,6 +60,7 @@ interface RemovedMemberStateSnapshot extends JsonObject {
     readonly email: string;
     readonly role: DemoMemberStorageRole;
     readonly createdAt: string;
+    readonly revision: string;
     readonly ownedProjectIds: readonly string[];
     readonly ownedDocumentIds: readonly string[];
 }
@@ -160,8 +161,7 @@ export function createMemberRemoveAction(executor: PostgresQueryExecutor) {
 
             const removedMember = await removeMember(
                 executor,
-                context.input.workspaceId,
-                member.id,
+                createRemovedMemberStateSnapshot(member, ownership),
             );
 
             return {
@@ -169,8 +169,8 @@ export function createMemberRemoveAction(executor: PostgresQueryExecutor) {
                     memberId: removedMember.id,
                     status: 'removed',
                     role: removedMember.role,
-                    projectOwnerLinksCleared: ownership.ownedProjectIds.length,
-                    documentOwnerLinksCleared: ownership.ownedDocumentIds.length,
+                    projectOwnerLinksCleared: removedMember.projectOwnerLinksCleared,
+                    documentOwnerLinksCleared: removedMember.documentOwnerLinksCleared,
                 },
                 metadata: {
                     memberName: removedMember.name,
@@ -204,7 +204,7 @@ export function createMemberRemoveAction(executor: PostgresQueryExecutor) {
 
             const snapshot = await readRemovedMemberStateSnapshot(context);
 
-            const restoredMember = await restoreMember(executor, snapshot.value);
+            const restoredMember = await restoreMember(executor, snapshot.value, context.conflicts);
 
             const restoredProjectOwnerLinks = await restoreDemoProjectOwnerLinks(
                 executor,
@@ -213,12 +213,32 @@ export function createMemberRemoveAction(executor: PostgresQueryExecutor) {
                 snapshot.value.ownedProjectIds,
             );
 
+            if (restoredProjectOwnerLinks !== snapshot.value.ownedProjectIds.length) {
+                await throwMemberRemoveUndoConflict(
+                    context.conflicts,
+                    snapshot.value.memberId,
+                    'Project owner links changed before they could be restored safely.',
+                    'Owned projects are unassigned',
+                    'One or more owned projects are no longer unassigned',
+                );
+            }
+
             const restoredDocumentOwnerLinks = await restoreDemoDocumentOwnerLinks(
                 executor,
                 snapshot.value.workspaceId,
                 restoredMember.id,
                 snapshot.value.ownedDocumentIds,
             );
+
+            if (restoredDocumentOwnerLinks !== snapshot.value.ownedDocumentIds.length) {
+                await throwMemberRemoveUndoConflict(
+                    context.conflicts,
+                    snapshot.value.memberId,
+                    'Document owner links changed before they could be restored safely.',
+                    'Owned documents are unassigned',
+                    'One or more owned documents are no longer unassigned',
+                );
+            }
 
             return {
                 data: {
@@ -239,25 +259,10 @@ export function createMemberRemoveAction(executor: PostgresQueryExecutor) {
 async function readRemovedMemberStateSnapshot(context: {
     readonly run: { readonly id: string };
     readonly snapshots: {
-        get<TValue extends JsonObject>(key: string): Promise<{ readonly value: TValue } | null>;
+        require<TValue extends JsonObject>(key: string): Promise<{ readonly value: TValue }>;
     };
 }): Promise<{ readonly value: RemovedMemberStateSnapshot }> {
-    const snapshot = await context.snapshots.get<RemovedMemberStateSnapshot>(
-        REMOVED_MEMBER_STATE_SNAPSHOT_KEY,
-    );
-
-    if (snapshot === null) {
-        throw new RollbackKitError({
-            code: 'SNAPSHOT_NOT_FOUND',
-            message: 'Removed member state snapshot was not found.',
-            details: {
-                actionRunId: context.run.id,
-                snapshotKey: REMOVED_MEMBER_STATE_SNAPSHOT_KEY,
-            },
-        });
-    }
-
-    return snapshot;
+    return context.snapshots.require<RemovedMemberStateSnapshot>(REMOVED_MEMBER_STATE_SNAPSHOT_KEY);
 }
 
 function parseMemberRemoveInput(input: unknown): MemberRemoveInput {
@@ -322,38 +327,48 @@ async function getOwnershipImpact(
 
 async function removeMember(
     executor: PostgresQueryExecutor,
-    workspaceId: string,
-    memberId: string,
-): Promise<DemoMemberRecord> {
-    const member = await deleteDemoMember(executor, workspaceId, memberId);
+    snapshot: RemovedMemberStateSnapshot,
+): Promise<
+    DemoMemberRecord & {
+        readonly projectOwnerLinksCleared: number;
+        readonly documentOwnerLinksCleared: number;
+    }
+> {
+    const result = await deleteDemoMember(executor, {
+        member: snapshot,
+        ownedProjectIds: snapshot.ownedProjectIds,
+        ownedDocumentIds: snapshot.ownedDocumentIds,
+    });
 
-    if (member === null) {
-        throw new RollbackKitError({
-            code: 'ACTION_NOT_FOUND',
-            message: `Member "${memberId}" was not found.`,
-            details: {
-                memberId,
-            },
-        });
+    if (result === null) {
+        throw createMemberRemoveConflictError(
+            snapshot.memberId,
+            'Member or ownership changed before removal could complete safely.',
+        );
     }
 
-    return member;
+    return {
+        ...result.member,
+        projectOwnerLinksCleared: result.projectOwnerLinksCleared,
+        documentOwnerLinksCleared: result.documentOwnerLinksCleared,
+    };
 }
 
 async function restoreMember(
     executor: PostgresQueryExecutor,
     snapshot: RemovedMemberStateSnapshot,
+    conflicts: ConflictRecorder,
 ): Promise<DemoMemberRecord> {
     const member = await insertDemoMember(executor, snapshot);
 
     if (member === null) {
-        throw new RollbackKitError({
-            code: 'STORAGE_ERROR',
-            message: 'PostgreSQL did not return restored member after insert.',
-            details: {
-                memberId: snapshot.memberId,
-            },
-        });
+        return throwMemberRemoveUndoConflict(
+            conflicts,
+            snapshot.memberId,
+            'Member could not be restored because the identity or email is no longer available.',
+            'Member id and email are available',
+            'Member id or email is already in use',
+        );
     }
 
     return member;
@@ -492,6 +507,7 @@ function createRemovedMemberStateSnapshot(
         email: member.email,
         role: member.role,
         createdAt: normalizeDate(member.created_at),
+        revision: member.revision,
         ownedProjectIds: ownership.ownedProjectIds,
         ownedDocumentIds: ownership.ownedDocumentIds,
     };

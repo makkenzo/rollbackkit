@@ -114,13 +114,6 @@ export function serializeActionError(
         };
     }
 
-    if (error instanceof Error) {
-        return {
-            message: error.message,
-            ...(conflict === undefined ? {} : { conflict }),
-        };
-    }
-
     return {
         message: 'Unknown demo action error.',
         ...(conflict === undefined ? {} : { conflict }),

@@ -13,6 +13,7 @@ export interface DemoMemberRecord extends QueryResultRow {
     readonly email: string;
     readonly role: DemoMemberStorageRole;
     readonly created_at: Date | string;
+    readonly revision: string;
 }
 
 export interface DemoMemberRestoreState {
@@ -22,6 +23,19 @@ export interface DemoMemberRestoreState {
     readonly email: string;
     readonly role: DemoMemberStorageRole;
     readonly createdAt: string;
+    readonly revision: string;
+}
+
+export interface DemoMemberDeletePrecondition {
+    readonly member: DemoMemberRestoreState;
+    readonly ownedProjectIds: readonly string[];
+    readonly ownedDocumentIds: readonly string[];
+}
+
+export interface DemoMemberDeleteResult {
+    readonly member: DemoMemberRecord;
+    readonly projectOwnerLinksCleared: number;
+    readonly documentOwnerLinksCleared: number;
 }
 
 interface ExistingMemberByEmailRow extends QueryResultRow {
@@ -39,7 +53,7 @@ export async function findDemoMemberById(
 ): Promise<DemoMemberRecord | null> {
     const result = await executor.query<DemoMemberRecord>(
         `
-SELECT id, workspace_id, name, email, role, created_at
+SELECT id, workspace_id, name, email, role, created_at, xmin::text AS revision
 FROM demo_members
 WHERE id = $1
   AND workspace_id = $2
@@ -55,6 +69,7 @@ export async function changeDemoMemberRole(
     executor: PostgresQueryExecutor,
     workspaceId: string,
     memberId: string,
+    expectedRole: DemoMemberStorageRole,
     role: DemoMemberStorageRole,
 ): Promise<DemoMemberRecord | null> {
     const result = await executor.query<DemoMemberRecord>(
@@ -63,9 +78,10 @@ UPDATE demo_members
 SET role = $2
 WHERE id = $1
   AND workspace_id = $3
-RETURNING id, workspace_id, name, email, role, created_at
+  AND role = $4
+RETURNING id, workspace_id, name, email, role, created_at, xmin::text AS revision
 	`,
-        [memberId, role, workspaceId],
+        [memberId, role, workspaceId, expectedRole],
     );
 
     return result.rows[0] ?? null;
@@ -73,40 +89,52 @@ RETURNING id, workspace_id, name, email, role, created_at
 
 export async function deleteDemoMember(
     executor: PostgresQueryExecutor,
-    workspaceId: string,
-    memberId: string,
-): Promise<DemoMemberRecord | null> {
-    await executor.query(
-        `
-UPDATE demo_projects
-SET owner_member_id = NULL
-WHERE owner_member_id = $1
-  AND workspace_id = $2
-		`,
-        [memberId, workspaceId],
-    );
+    precondition: DemoMemberDeletePrecondition,
+): Promise<DemoMemberDeleteResult | null> {
+    const projectOwnerLinksCleared = await clearExpectedProjectOwnerLinks(executor, precondition);
 
-    await executor.query(
-        `
-UPDATE demo_documents
-SET owner_member_id = NULL
-WHERE owner_member_id = $1
-  AND workspace_id = $2
-		`,
-        [memberId, workspaceId],
-    );
+    if (projectOwnerLinksCleared !== precondition.ownedProjectIds.length) {
+        return null;
+    }
+
+    const documentOwnerLinksCleared = await clearExpectedDocumentOwnerLinks(executor, precondition);
+
+    if (documentOwnerLinksCleared !== precondition.ownedDocumentIds.length) {
+        return null;
+    }
 
     const result = await executor.query<DemoMemberRecord>(
         `
 DELETE FROM demo_members
 WHERE id = $1
   AND workspace_id = $2
-RETURNING id, workspace_id, name, email, role, created_at
-	`,
-        [memberId, workspaceId],
+  AND name = $3
+  AND email = $4
+  AND role = $5
+  AND xmin::text = $6
+RETURNING id, workspace_id, name, email, role, created_at, xmin::text AS revision
+		`,
+        [
+            precondition.member.memberId,
+            precondition.member.workspaceId,
+            precondition.member.name,
+            precondition.member.email,
+            precondition.member.role,
+            precondition.member.revision,
+        ],
     );
 
-    return result.rows[0] ?? null;
+    const member = result.rows[0];
+
+    if (member === undefined) {
+        return null;
+    }
+
+    return {
+        member,
+        projectOwnerLinksCleared,
+        documentOwnerLinksCleared,
+    };
 }
 
 export async function insertDemoMember(
@@ -117,7 +145,8 @@ export async function insertDemoMember(
         `
 INSERT INTO demo_members (id, workspace_id, name, email, role, created_at)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, workspace_id, name, email, role, created_at
+ON CONFLICT DO NOTHING
+RETURNING id, workspace_id, name, email, role, created_at, xmin::text AS revision
 `,
         [
             snapshot.memberId,
@@ -130,6 +159,58 @@ RETURNING id, workspace_id, name, email, role, created_at
     );
 
     return result.rows[0] ?? null;
+}
+
+async function clearExpectedProjectOwnerLinks(
+    executor: PostgresQueryExecutor,
+    precondition: DemoMemberDeletePrecondition,
+): Promise<number> {
+    if (precondition.ownedProjectIds.length === 0) {
+        return 0;
+    }
+
+    const result = await executor.query(
+        `
+UPDATE demo_projects
+SET owner_member_id = NULL
+WHERE id = ANY($1::text[])
+  AND workspace_id = $2
+  AND owner_member_id = $3
+		`,
+        [
+            precondition.ownedProjectIds,
+            precondition.member.workspaceId,
+            precondition.member.memberId,
+        ],
+    );
+
+    return result.rowCount ?? 0;
+}
+
+async function clearExpectedDocumentOwnerLinks(
+    executor: PostgresQueryExecutor,
+    precondition: DemoMemberDeletePrecondition,
+): Promise<number> {
+    if (precondition.ownedDocumentIds.length === 0) {
+        return 0;
+    }
+
+    const result = await executor.query(
+        `
+UPDATE demo_documents
+SET owner_member_id = NULL
+WHERE id = ANY($1::text[])
+  AND workspace_id = $2
+  AND owner_member_id = $3
+		`,
+        [
+            precondition.ownedDocumentIds,
+            precondition.member.workspaceId,
+            precondition.member.memberId,
+        ],
+    );
+
+    return result.rowCount ?? 0;
 }
 
 export async function demoWorkspaceExists(

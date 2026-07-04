@@ -4,6 +4,8 @@ import { Client } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { MEMBER_REMOVE_ACTION_NAME } from '../../lib/server/actions/member-remove.action';
+import { deleteDemoMember } from '../../lib/server/repositories/member-repository';
+import { restoreDemoProjectOwnerLinks } from '../../lib/server/repositories/ownership-repository';
 import { createDemoRollbackKit } from '../../lib/server/rollbackkit';
 import { readDemoSql } from '../helpers/demo-sql';
 
@@ -210,6 +212,46 @@ ORDER BY created_at ASC
             },
         });
     });
+
+    it('rejects stale member removal ownership writes', async () => {
+        const currentClient = requireClient();
+        const member = await readMemberRestoreState(currentClient, 'member_remove_target');
+
+        await setProjectOwner(currentClient, 'project_member_remove_owned', 'member_remove_actor');
+
+        await expect(
+            deleteDemoMember(currentClient, {
+                member,
+                ownedProjectIds: ['project_member_remove_owned'],
+                ownedDocumentIds: ['document_member_remove_owned'],
+            }),
+        ).resolves.toBeNull();
+
+        await expect(readMemberExists(currentClient, 'member_remove_target')).resolves.toBe(true);
+        await expect(readProjectOwner(currentClient, 'project_member_remove_owned')).resolves.toBe(
+            'member_remove_actor',
+        );
+    });
+
+    it('does not restore project owner links over reassigned owners', async () => {
+        const currentClient = requireClient();
+
+        await setProjectOwner(currentClient, 'project_member_remove_owned', null);
+        await setProjectOwner(currentClient, 'project_member_remove_owned', 'member_remove_actor');
+
+        await expect(
+            restoreDemoProjectOwnerLinks(
+                currentClient,
+                'workspace_member_remove_test',
+                'member_remove_target',
+                ['project_member_remove_owned'],
+            ),
+        ).resolves.toBe(0);
+
+        await expect(readProjectOwner(currentClient, 'project_member_remove_owned')).resolves.toBe(
+            'member_remove_actor',
+        );
+    });
 });
 
 function requireClient(): Client {
@@ -339,6 +381,52 @@ SELECT EXISTS (
     return result.rows[0]?.exists ?? false;
 }
 
+async function readMemberRestoreState(
+    executor: Client,
+    memberId: string,
+): Promise<{
+    readonly memberId: string;
+    readonly workspaceId: string;
+    readonly name: string;
+    readonly email: string;
+    readonly role: 'owner' | 'admin' | 'viewer';
+    readonly createdAt: string;
+    readonly revision: string;
+}> {
+    const result = await executor.query<{
+        readonly id: string;
+        readonly workspace_id: string;
+        readonly name: string;
+        readonly email: string;
+        readonly role: 'owner' | 'admin' | 'viewer';
+        readonly created_at: Date;
+        readonly revision: string;
+    }>(
+        `
+SELECT id, workspace_id, name, email, role, created_at, xmin::text AS revision
+FROM demo_members
+WHERE id = $1
+`,
+        [memberId],
+    );
+
+    const row = result.rows[0];
+
+    if (row === undefined) {
+        throw new Error(`Member "${memberId}" was not found.`);
+    }
+
+    return {
+        memberId: row.id,
+        workspaceId: row.workspace_id,
+        name: row.name,
+        email: row.email,
+        role: row.role,
+        createdAt: row.created_at.toISOString(),
+        revision: row.revision,
+    };
+}
+
 async function readProjectOwner(executor: Client, projectId: string): Promise<string | null> {
     const result = await executor.query<{ readonly owner_member_id: string | null }>(
         `
@@ -350,6 +438,21 @@ WHERE id = $1
     );
 
     return result.rows[0]?.owner_member_id ?? null;
+}
+
+async function setProjectOwner(
+    executor: Client,
+    projectId: string,
+    memberId: string | null,
+): Promise<void> {
+    await executor.query(
+        `
+UPDATE demo_projects
+SET owner_member_id = $2
+WHERE id = $1
+`,
+        [projectId, memberId],
+    );
 }
 
 async function readDocumentOwner(executor: Client, documentId: string): Promise<string | null> {

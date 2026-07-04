@@ -4,6 +4,7 @@ import { Client } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { MEMBER_CHANGE_ROLE_ACTION_NAME } from '../../lib/server/actions/member-change-role.action';
+import { changeDemoMemberRole } from '../../lib/server/repositories/member-repository';
 import { createDemoRollbackKit } from '../../lib/server/rollbackkit';
 import { readDemoSql } from '../helpers/demo-sql';
 
@@ -221,6 +222,26 @@ ORDER BY created_at ASC
                 suggestedNextStep: 'Review the current member role before retrying undo.',
             },
         });
+    });
+
+    it('rejects stale member role writes', async () => {
+        const currentClient = requireClient();
+
+        await setMemberRole(currentClient, 'member_action_role_target', 'admin');
+
+        await expect(
+            changeDemoMemberRole(
+                currentClient,
+                'workspace_action_test',
+                'member_action_role_target',
+                'viewer',
+                'admin',
+            ),
+        ).resolves.toBeNull();
+
+        await expect(readMemberRole(currentClient, 'member_action_role_target')).resolves.toBe(
+            'admin',
+        );
     });
 });
 

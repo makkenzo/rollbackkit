@@ -80,4 +80,17 @@ describe('demo action service DTO boundary', () => {
             },
         });
     });
+
+    it('serializes unexpected errors with a generic message', async () => {
+        const response = await runDemoAction(async () => {
+            throw new Error('database password leaked in stack');
+        });
+
+        expect(response).toEqual({
+            ok: false,
+            error: {
+                message: 'Unknown demo action error.',
+            },
+        });
+    });
 });

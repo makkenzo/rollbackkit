@@ -4,6 +4,7 @@ import { Client } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { PROJECT_ARCHIVE_ACTION_NAME } from '../../lib/server/actions/project-archive.action';
+import { archiveDemoProject } from '../../lib/server/repositories/project-repository';
 import { createDemoRollbackKit } from '../../lib/server/rollbackkit';
 import { readDemoSql } from '../helpers/demo-sql';
 
@@ -208,6 +209,62 @@ ORDER BY created_at ASC
             },
         });
     });
+
+    it('rejects stale project archive writes', async () => {
+        const currentClient = requireClient();
+        const previousRevision = await readProjectRevision(
+            currentClient,
+            'project_action_archive_target',
+        );
+
+        await touchProjectUpdatedAt(currentClient, 'project_action_archive_target');
+
+        await expect(
+            archiveDemoProject(
+                currentClient,
+                'workspace_action_test',
+                'project_action_archive_target',
+                previousRevision,
+            ),
+        ).resolves.toBeNull();
+
+        await expect(
+            readProjectStatus(currentClient, 'project_action_archive_target'),
+        ).resolves.toBe('active');
+    });
+
+    it('blocks undo when the archived project changed after execution', async () => {
+        const currentClient = requireClient();
+        const rollbackkit = createDemoRollbackKit(currentClient);
+
+        const run = await rollbackkit.execute({
+            name: PROJECT_ARCHIVE_ACTION_NAME,
+            actor,
+            tenantId: 'workspace_action_test',
+            input: {
+                workspaceId: 'workspace_action_test',
+                projectId: 'project_action_archive_target',
+            },
+        });
+
+        await touchProjectUpdatedAt(currentClient, 'project_action_archive_target');
+
+        await expect(
+            rollbackkit.undo({
+                actionRunId: run.id,
+                actor,
+            }),
+        ).rejects.toMatchObject({
+            code: 'ACTION_CONFLICT',
+            details: {
+                reason: 'Project changed before it could be restored safely.',
+            },
+        });
+
+        await expect(
+            readProjectStatus(currentClient, 'project_action_archive_target'),
+        ).resolves.toBe('archived');
+    });
 });
 
 function requireClient(): Client {
@@ -336,6 +393,36 @@ WHERE id = $1
     }
 
     return row.status;
+}
+
+async function readProjectRevision(executor: Client, projectId: string): Promise<string> {
+    const result = await executor.query<{ readonly revision: string }>(
+        `
+SELECT xmin::text AS revision
+FROM demo_projects
+WHERE id = $1
+`,
+        [projectId],
+    );
+
+    const row = result.rows[0];
+
+    if (row === undefined) {
+        throw new Error(`Project "${projectId}" was not found.`);
+    }
+
+    return row.revision;
+}
+
+async function touchProjectUpdatedAt(executor: Client, projectId: string): Promise<void> {
+    await executor.query(
+        `
+UPDATE demo_projects
+SET updated_at = '2026-01-02T00:00:00.000Z'
+WHERE id = $1
+`,
+        [projectId],
+    );
 }
 
 async function deleteProject(executor: Client, projectId: string): Promise<void> {

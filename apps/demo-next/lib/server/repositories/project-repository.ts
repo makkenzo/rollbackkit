@@ -13,6 +13,7 @@ export interface DemoProjectRecord extends QueryResultRow {
     readonly archived_at: Date | string | null;
     readonly updated_at: Date | string;
     readonly document_count: number | string;
+    readonly revision: string;
 }
 
 export interface DemoProjectRestoreState {
@@ -37,6 +38,7 @@ SELECT
     demo_projects.status,
     demo_projects.archived_at,
     demo_projects.updated_at,
+    demo_projects.xmin::text AS revision,
     COUNT(demo_documents.id)::int AS document_count
 FROM demo_projects
 LEFT JOIN demo_documents
@@ -50,7 +52,8 @@ GROUP BY
     demo_projects.name,
     demo_projects.status,
     demo_projects.archived_at,
-    demo_projects.updated_at
+    demo_projects.updated_at,
+    demo_projects.xmin
 LIMIT 1
 `,
         [projectId, workspaceId],
@@ -63,9 +66,11 @@ export async function archiveDemoProject(
     executor: PostgresQueryExecutor,
     workspaceId: string,
     projectId: string,
-): Promise<void> {
-    await executor.query(
+    expectedRevision: string,
+): Promise<DemoProjectRecord | null> {
+    const result = await executor.query<DemoProjectRecord>(
         `
+WITH updated_project AS (
 UPDATE demo_projects
 SET
     status = 'archived',
@@ -73,17 +78,46 @@ SET
     updated_at = now()
 WHERE id = $1
   AND workspace_id = $2
+  AND status = 'active'
+  AND xmin::text = $3
+RETURNING id, workspace_id, name, status, archived_at, updated_at, xmin::text AS revision
+)
+SELECT
+    updated_project.id,
+    updated_project.workspace_id,
+    updated_project.name,
+    updated_project.status,
+    updated_project.archived_at,
+    updated_project.updated_at,
+    updated_project.revision,
+    COUNT(demo_documents.id)::int AS document_count
+FROM updated_project
+LEFT JOIN demo_documents
+    ON demo_documents.project_id = updated_project.id
+    AND demo_documents.workspace_id = updated_project.workspace_id
+GROUP BY
+    updated_project.id,
+    updated_project.workspace_id,
+    updated_project.name,
+    updated_project.status,
+    updated_project.archived_at,
+    updated_project.updated_at,
+    updated_project.revision
 	`,
-        [projectId, workspaceId],
+        [projectId, workspaceId, expectedRevision],
     );
+
+    return result.rows[0] ?? null;
 }
 
 export async function restoreDemoProject(
     executor: PostgresQueryExecutor,
     snapshot: DemoProjectRestoreState,
-): Promise<void> {
-    await executor.query(
+    expectedCurrentRevision: string,
+): Promise<DemoProjectRecord | null> {
+    const result = await executor.query<DemoProjectRecord>(
         `
+WITH updated_project AS (
 UPDATE demo_projects
 SET
     status = $2,
@@ -91,6 +125,31 @@ SET
     updated_at = $4
 WHERE id = $1
   AND workspace_id = $5
+  AND status = 'archived'
+  AND xmin::text = $6
+RETURNING id, workspace_id, name, status, archived_at, updated_at, xmin::text AS revision
+)
+SELECT
+    updated_project.id,
+    updated_project.workspace_id,
+    updated_project.name,
+    updated_project.status,
+    updated_project.archived_at,
+    updated_project.updated_at,
+    updated_project.revision,
+    COUNT(demo_documents.id)::int AS document_count
+FROM updated_project
+LEFT JOIN demo_documents
+    ON demo_documents.project_id = updated_project.id
+    AND demo_documents.workspace_id = updated_project.workspace_id
+GROUP BY
+    updated_project.id,
+    updated_project.workspace_id,
+    updated_project.name,
+    updated_project.status,
+    updated_project.archived_at,
+    updated_project.updated_at,
+    updated_project.revision
 	`,
         [
             snapshot.projectId,
@@ -98,6 +157,9 @@ WHERE id = $1
             snapshot.archivedAt,
             snapshot.updatedAt,
             snapshot.workspaceId,
+            expectedCurrentRevision,
         ],
     );
+
+    return result.rows[0] ?? null;
 }

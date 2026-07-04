@@ -106,6 +106,7 @@ UPDATE demo_projects
 SET owner_member_id = $1
 WHERE id = ANY($2::text[])
   AND workspace_id = $3
+  AND owner_member_id IS NULL
 	`,
         [memberId, projectIds, workspaceId],
     );
@@ -129,6 +130,7 @@ UPDATE demo_documents
 SET owner_member_id = $1
 WHERE id = ANY($2::text[])
   AND workspace_id = $3
+  AND owner_member_id IS NULL
 	`,
         [memberId, documentIds, workspaceId],
     );

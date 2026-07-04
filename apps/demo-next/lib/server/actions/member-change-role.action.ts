@@ -137,6 +137,7 @@ export function createMemberChangeRoleAction(executor: PostgresQueryExecutor) {
                 executor,
                 context.input.workspaceId,
                 member.id,
+                member.role,
                 context.input.role,
             );
 
@@ -184,6 +185,7 @@ export function createMemberChangeRoleAction(executor: PostgresQueryExecutor) {
                 executor,
                 snapshot.value.workspaceId,
                 snapshot.value.memberId,
+                snapshot.value.changedToRole,
                 snapshot.value.previousRole,
             );
 
@@ -204,25 +206,10 @@ export function createMemberChangeRoleAction(executor: PostgresQueryExecutor) {
 async function readPreviousMemberRoleSnapshot(context: {
     readonly run: { readonly id: string };
     readonly snapshots: {
-        get<TValue extends JsonObject>(key: string): Promise<{ readonly value: TValue } | null>;
+        require<TValue extends JsonObject>(key: string): Promise<{ readonly value: TValue }>;
     };
 }): Promise<{ readonly value: PreviousMemberRoleSnapshot }> {
-    const snapshot = await context.snapshots.get<PreviousMemberRoleSnapshot>(
-        PREVIOUS_MEMBER_ROLE_SNAPSHOT_KEY,
-    );
-
-    if (snapshot === null) {
-        throw new RollbackKitError({
-            code: 'SNAPSHOT_NOT_FOUND',
-            message: 'Previous member role snapshot was not found.',
-            details: {
-                actionRunId: context.run.id,
-                snapshotKey: PREVIOUS_MEMBER_ROLE_SNAPSHOT_KEY,
-            },
-        });
-    }
-
-    return snapshot;
+    return context.snapshots.require<PreviousMemberRoleSnapshot>(PREVIOUS_MEMBER_ROLE_SNAPSHOT_KEY);
 }
 
 function parseMemberChangeRoleInput(input: unknown): MemberChangeRoleInput {
@@ -279,18 +266,16 @@ async function changeMemberRole(
     executor: PostgresQueryExecutor,
     workspaceId: string,
     memberId: string,
+    expectedRole: DemoMemberStorageRole,
     role: DemoMemberStorageRole,
 ): Promise<DemoMemberRecord> {
-    const member = await changeDemoMemberRole(executor, workspaceId, memberId, role);
+    const member = await changeDemoMemberRole(executor, workspaceId, memberId, expectedRole, role);
 
     if (member === null) {
-        throw new RollbackKitError({
-            code: 'ACTION_NOT_FOUND',
-            message: `Member "${memberId}" was not found.`,
-            details: {
-                memberId,
-            },
-        });
+        throw createMemberRoleConflictError(
+            memberId,
+            `Expected current role "${expectedRole}" before changing to "${role}".`,
+        );
     }
 
     return member;

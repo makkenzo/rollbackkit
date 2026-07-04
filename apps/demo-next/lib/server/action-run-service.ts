@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { RollbackKitError } from '@rollbackkit/core';
+import { isRollbackKitError, RollbackKitError } from '@rollbackkit/core';
 import { getLatestDemoActionConflict } from './conflict-summary';
 import {
     type DemoActionResponse,
@@ -20,17 +20,10 @@ export async function undoDemoActionRun(
             const existingRun = await rollbackkit.getActionRun(actionRunId);
 
             if (existingRun !== null && existingRun.tenantId !== context.tenantId) {
-                throw new RollbackKitError({
-                    code: 'ACTION_PERMISSION_DENIED',
-                    message: `Action run "${actionRunId}" does not belong to the current demo tenant.`,
-                    details: {
-                        actionRunId,
-                        tenantId: context.tenantId,
-                        ...(existingRun.tenantId === undefined
-                            ? {}
-                            : { actionRunTenantId: existingRun.tenantId }),
-                    },
-                });
+                return {
+                    ok: false,
+                    error: serializeActionError(createTenantDeniedError()),
+                };
             }
 
             const run = await rollbackkit.undo({
@@ -44,14 +37,22 @@ export async function undoDemoActionRun(
                 data: serializeActionRun(run),
             };
         } catch (error) {
-            const conflict = getLatestDemoActionConflict(
-                await rollbackkit.getConflicts(actionRunId),
-            );
+            const conflict =
+                isRollbackKitError(error) && error.code === 'ACTION_PERMISSION_DENIED'
+                    ? undefined
+                    : getLatestDemoActionConflict(await rollbackkit.getConflicts(actionRunId));
 
             return {
                 ok: false,
                 error: serializeActionError(error, conflict),
             };
         }
+    });
+}
+
+function createTenantDeniedError(): RollbackKitError {
+    return new RollbackKitError({
+        code: 'ACTION_PERMISSION_DENIED',
+        message: 'Action run cannot be undone in the current demo tenant.',
     });
 }

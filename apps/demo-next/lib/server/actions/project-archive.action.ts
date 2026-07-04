@@ -25,6 +25,8 @@ interface ProjectArchiveResult extends JsonObject {
     readonly projectId: string;
     readonly status: DemoProjectStorageStatus;
     readonly archivedAt: string | null;
+    readonly updatedAt: string;
+    readonly revision: string;
 }
 
 interface PreviousProjectStateSnapshot extends JsonObject {
@@ -33,6 +35,7 @@ interface PreviousProjectStateSnapshot extends JsonObject {
     readonly status: DemoProjectStorageStatus;
     readonly archivedAt: string | null;
     readonly updatedAt: string;
+    readonly revision: string;
 }
 
 export function createProjectArchiveAction(executor: PostgresQueryExecutor) {
@@ -123,6 +126,7 @@ export function createProjectArchiveAction(executor: PostgresQueryExecutor) {
                 executor,
                 context.input.workspaceId,
                 project.id,
+                project.revision,
             );
 
             return {
@@ -173,7 +177,11 @@ export function createProjectArchiveAction(executor: PostgresQueryExecutor) {
 
             const snapshot = await readPreviousProjectStateSnapshot(context);
 
-            const restoredProject = await restoreProject(executor, snapshot.value);
+            const restoredProject = await restoreProject(
+                executor,
+                snapshot.value,
+                readExpectedArchivedProjectRevision(context.run.result),
+            );
 
             return {
                 data: mapProjectResult(restoredProject),
@@ -188,25 +196,12 @@ export function createProjectArchiveAction(executor: PostgresQueryExecutor) {
 async function readPreviousProjectStateSnapshot(context: {
     readonly run: { readonly id: string };
     readonly snapshots: {
-        get<TValue extends JsonObject>(key: string): Promise<{ readonly value: TValue } | null>;
+        require<TValue extends JsonObject>(key: string): Promise<{ readonly value: TValue }>;
     };
 }): Promise<{ readonly value: PreviousProjectStateSnapshot }> {
-    const snapshot = await context.snapshots.get<PreviousProjectStateSnapshot>(
+    return context.snapshots.require<PreviousProjectStateSnapshot>(
         PREVIOUS_PROJECT_STATE_SNAPSHOT_KEY,
     );
-
-    if (snapshot === null) {
-        throw new RollbackKitError({
-            code: 'SNAPSHOT_NOT_FOUND',
-            message: 'Previous project state snapshot was not found.',
-            details: {
-                actionRunId: context.run.id,
-                snapshotKey: PREVIOUS_PROJECT_STATE_SNAPSHOT_KEY,
-            },
-        });
-    }
-
-    return snapshot;
 }
 
 function parseProjectArchiveInput(input: unknown): ProjectArchiveInput {
@@ -257,19 +252,35 @@ async function archiveProject(
     executor: PostgresQueryExecutor,
     workspaceId: string,
     projectId: string,
+    expectedUpdatedAt: string,
 ): Promise<DemoProjectRecord> {
-    await archiveDemoProject(executor, workspaceId, projectId);
+    const project = await archiveDemoProject(executor, workspaceId, projectId, expectedUpdatedAt);
 
-    return getProjectOrThrow(executor, workspaceId, projectId);
+    if (project !== null) {
+        return project;
+    }
+
+    throw createProjectConflictError(
+        projectId,
+        'Project changed before it could be archived safely.',
+    );
 }
 
 async function restoreProject(
     executor: PostgresQueryExecutor,
     snapshot: PreviousProjectStateSnapshot,
+    expectedCurrentUpdatedAt: string,
 ): Promise<DemoProjectRecord> {
-    await restoreDemoProject(executor, snapshot);
+    const project = await restoreDemoProject(executor, snapshot, expectedCurrentUpdatedAt);
 
-    return getProjectOrThrow(executor, snapshot.workspaceId, snapshot.projectId);
+    if (project !== null) {
+        return project;
+    }
+
+    throw createProjectConflictError(
+        snapshot.projectId,
+        'Project changed before it could be restored safely.',
+    );
 }
 
 function createPreviousProjectStateSnapshot(
@@ -281,6 +292,7 @@ function createPreviousProjectStateSnapshot(
         status: project.status,
         archivedAt: normalizeNullableDate(project.archived_at),
         updatedAt: normalizeDate(project.updated_at),
+        revision: project.revision,
     };
 }
 
@@ -289,7 +301,29 @@ function mapProjectResult(project: DemoProjectRecord): ProjectArchiveResult {
         projectId: project.id,
         status: project.status,
         archivedAt: normalizeNullableDate(project.archived_at),
+        updatedAt: normalizeDate(project.updated_at),
+        revision: project.revision,
     };
+}
+
+function readExpectedArchivedProjectRevision(result: unknown): string {
+    if (typeof result !== 'object' || result === null || Array.isArray(result)) {
+        throw new RollbackKitError({
+            code: 'ACTION_CONFLICT',
+            message: 'Archived project state was not recorded, so undo would be unsafe.',
+        });
+    }
+
+    const candidate = result as { readonly revision?: unknown };
+
+    if (typeof candidate.revision === 'string' && candidate.revision.trim() !== '') {
+        return candidate.revision;
+    }
+
+    throw new RollbackKitError({
+        code: 'ACTION_CONFLICT',
+        message: 'Archived project revision was not recorded, so undo would be unsafe.',
+    });
 }
 
 function normalizeNullableDate(value: Date | string | null): string | null {
