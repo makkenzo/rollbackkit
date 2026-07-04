@@ -20,6 +20,13 @@ describe('@rollbackkit/cli public API', () => {
             access: 'public',
         });
     });
+
+    it('documents ROLLBACKKIT_DATABASE_URL as the credential path', () => {
+        const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+
+        expect(readme).toContain('ROLLBACKKIT_DATABASE_URL');
+        expect(readme).not.toMatch(/--database-url\s+"postgres(?:ql)?:\/\/[^"\s]+:[^"@\s]+@/);
+    });
 });
 
 function readPackageVersion(): string {

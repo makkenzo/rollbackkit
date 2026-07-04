@@ -360,6 +360,75 @@ describe('@rollbackkit/cli', () => {
         expect(stderr.output).toContain('Caused by: Error: connection failed');
         expect(stderr.output).toContain('Caused by: Error: socket closed');
     });
+
+    it('redacts database URL credentials in normal error output', async () => {
+        const stdout = new MemoryWriter();
+        const stderr = new MemoryWriter();
+
+        const exitCode = await runCli({
+            argv: [
+                'node',
+                'rollbackkit',
+                'migrate',
+                '--database-url',
+                'postgres://user:password@localhost:5432/app_database',
+            ],
+            stdout,
+            stderr,
+            env: {},
+            migratePostgresDatabase: async () => {
+                throw new Error(
+                    'connection failed for postgres://user:password@localhost:5432/app_database',
+                );
+            },
+        });
+
+        expect(exitCode).toBe(1);
+        expect(stdout.output).toBe('');
+        expect(stderr.output).toContain('postgres://user:***@localhost:5432/app_database');
+        expect(stderr.output).not.toContain('user:password');
+    });
+
+    it('redacts database URL credentials in verbose stacks and causes', async () => {
+        const stdout = new MemoryWriter();
+        const stderr = new MemoryWriter();
+        const cause = new Error(
+            'dial failed for postgresql://reporter:secret@db.internal:5432/rollbackkit',
+        );
+        const error = new Error(
+            'migration failed for postgres://admin:hunter2@localhost:5432/app_database',
+            {
+                cause,
+            },
+        );
+
+        error.stack =
+            'Error: migration failed for postgres://admin:hunter2@localhost:5432/app_database\n' +
+            '    at migrate (postgres://admin:hunter2@localhost:5432/app_database)';
+
+        const exitCode = await runCli({
+            argv: [
+                'node',
+                'rollbackkit',
+                '--verbose',
+                'migrate',
+                '--database-url',
+                'postgres://admin:hunter2@localhost:5432/app_database',
+            ],
+            stdout,
+            stderr,
+            env: {},
+            migratePostgresDatabase: async () => {
+                throw error;
+            },
+        });
+
+        expect(exitCode).toBe(1);
+        expect(stderr.output).toContain('postgres://admin:***@localhost:5432/app_database');
+        expect(stderr.output).toContain('postgresql://reporter:***@db.internal:5432/rollbackkit');
+        expect(stderr.output).not.toContain('admin:hunter2');
+        expect(stderr.output).not.toContain('reporter:secret');
+    });
 });
 
 function readPackageVersion(): string {

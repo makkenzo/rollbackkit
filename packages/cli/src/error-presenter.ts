@@ -3,6 +3,8 @@ import { RollbackKitPostgresMigrationError } from '@rollbackkit/postgres';
 import type { CliWriter } from './output';
 import { writeLine } from './output';
 
+const DATABASE_URL_CREDENTIAL_PATTERN = /\b(postgres(?:ql)?:\/\/)([^:@/\s]+):([^@/\s]+)@/g;
+
 export interface CliErrorPresentationOptions {
     readonly verbose?: boolean;
 }
@@ -13,7 +15,7 @@ export function writeCliError(
     options: CliErrorPresentationOptions = {},
 ): void {
     if (isRollbackKitError(error)) {
-        writeLine(writer, `${error.code}: ${error.message}`);
+        writeLine(writer, redactDatabaseUrlCredentials(`${error.code}: ${error.message}`));
         writeVerboseDetails(writer, error, options);
         return;
     }
@@ -24,14 +26,14 @@ export function writeCliError(
                 ? 'PostgreSQL migration error'
                 : `PostgreSQL migration ${error.migrationId}`;
 
-        writeLine(writer, `${prefix}: ${error.message}`);
+        writeLine(writer, redactDatabaseUrlCredentials(`${prefix}: ${error.message}`));
         writeVerboseDetails(writer, error, options);
         return;
     }
 
     const message = error instanceof Error ? error.message : String(error);
 
-    writeLine(writer, message);
+    writeLine(writer, redactDatabaseUrlCredentials(message));
     writeVerboseDetails(writer, error, options);
 }
 
@@ -45,7 +47,7 @@ function writeVerboseDetails(
     }
 
     if (error.stack !== undefined) {
-        writeLine(writer, error.stack);
+        writeLine(writer, redactDatabaseUrlCredentials(error.stack));
     }
 
     writeCauseChain(writer, error.cause);
@@ -56,7 +58,7 @@ function writeCauseChain(writer: CliWriter, cause: unknown): void {
         return;
     }
 
-    writeLine(writer, `Caused by: ${formatCause(cause)}`);
+    writeLine(writer, redactDatabaseUrlCredentials(`Caused by: ${formatCause(cause)}`));
 
     if (cause instanceof Error) {
         writeCauseChain(writer, cause.cause);
@@ -69,4 +71,8 @@ function formatCause(cause: unknown): string {
     }
 
     return String(cause);
+}
+
+function redactDatabaseUrlCredentials(value: string): string {
+    return value.replace(DATABASE_URL_CREDENTIAL_PATTERN, '$1$2:***@');
 }

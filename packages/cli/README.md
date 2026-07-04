@@ -13,21 +13,22 @@ pnpm add -D @rollbackkit/cli
 Apply migrations:
 
 ```bash
-ROLLBACKKIT_DATABASE_URL="postgres://user:password@localhost:5432/app_database" \
+ROLLBACKKIT_DATABASE_URL="$DATABASE_URL" \
 pnpm exec rollbackkit migrate
 ```
 
 Check migration status:
 
 ```bash
-ROLLBACKKIT_DATABASE_URL="postgres://user:password@localhost:5432/app_database" \
+ROLLBACKKIT_DATABASE_URL="$DATABASE_URL" \
 pnpm exec rollbackkit doctor
 ```
 
-You can also pass the database URL directly:
+Prefer `ROLLBACKKIT_DATABASE_URL` for credential-bearing connection strings. You can also pass a
+non-secret local database URL directly when needed:
 
 ```bash
-pnpm exec rollbackkit doctor --database-url "postgres://user:password@localhost:5432/app_database"
+pnpm exec rollbackkit doctor --database-url "postgres://localhost:5432/app_database"
 ```
 
 `rollbackkit migrate` and `rollbackkit doctor` intentionally ignore generic `DATABASE_URL`.
@@ -37,7 +38,7 @@ ambient application database by accident.
 Fail CI when RollbackKit migrations are pending:
 
 ```bash
-ROLLBACKKIT_DATABASE_URL="postgres://user:password@localhost:5432/app_database" \
+ROLLBACKKIT_DATABASE_URL="$DATABASE_URL" \
 pnpm exec rollbackkit doctor --fail-on-pending
 ```
 
