@@ -455,9 +455,12 @@ function assertAppliedMigrationChecksums(
             );
         }
 
-        const expectedChecksum = createMigrationChecksum(migration);
+        const expectedChecksums = [
+            createMigrationChecksum(migration),
+            ...(migration.compatibleChecksums ?? []),
+        ];
 
-        if (appliedMigration.checksum !== expectedChecksum) {
+        if (!expectedChecksums.includes(appliedMigration.checksum)) {
             throw new RollbackKitPostgresMigrationError(
                 `Applied RollbackKit PostgreSQL migration "${appliedMigration.id}" checksum does not match the bundled migration.`,
                 {

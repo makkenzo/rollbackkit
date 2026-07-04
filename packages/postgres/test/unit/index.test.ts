@@ -539,7 +539,7 @@ function createAppliedMigrationRow(
 }
 
 const PRE_VALIDATION_AUDIT_INVARIANTS_CHECKSUM =
-    'sha256:ca67e59be794234e3c0cb43c1c9e680cb678bbb29375179f37735d1217559abc';
+    'sha256:fdf2f2c7bed361a27246a6fb2fce2e84f05e70ff9051d77d3e1bb25a79934e23';
 
 function createMigrationChecksum(id: string): string {
     const migration = ROLLBACKKIT_POSTGRES_MIGRATIONS.find((candidate) => candidate.id === id);

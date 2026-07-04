@@ -3,6 +3,9 @@ import type { RollbackKitPostgresMigration } from './types';
 export const auditInvariantsMigration: RollbackKitPostgresMigration = {
     id: '0003_audit_invariants',
     description: 'Add audit table constraints for action run identity, status and target columns.',
+    compatibleChecksums: [
+        'sha256:fdf2f2c7bed361a27246a6fb2fce2e84f05e70ff9051d77d3e1bb25a79934e23',
+    ],
     sql: `
 DO $$
 BEGIN
